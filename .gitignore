@@ -1,0 +1,6 @@
+node_modules/
+*.log
+.DS_Store
+
+# 插件大包/临时产物（dist 里只保留发布包）
+!dist/*.tgz

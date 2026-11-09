@@ -1,0 +1,32 @@
+{
+  "name": "dsh-plugin-reverse-proxy",
+  "version": "0.1.0",
+  "description": "把 nginx 的 dsh 反向代理搬进 DSH 插件：监听局域网端口，改写 Host/Origin/sec-fetch-site 后转发到 127.0.0.1:3080，支持 WebSocket 与流式响应。",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "reverse-proxy"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

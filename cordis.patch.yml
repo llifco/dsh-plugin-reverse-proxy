@@ -1,0 +1,23 @@
+# dsh-plugin-reverse-proxy — DSH 反向代理插件
+#
+# 把原先 nginx 监听 :8080 转发到 dsh web(127.0.0.1:3080) 的那层反代
+# 搬进 DSH 插件：监听局域网端口，改写 Host / Origin / Sec-Fetch-Site
+# 伪装成本机访问，并透传 WebSocket 与流式响应。
+#
+# 安装：dsh plugin --profile web add /opt/dsh-plugins/dsh-plugin-reverse-proxy
+# 停用：dsh plugin --profile web remove dsh-plugin-reverse-proxy
+#
+# 端口/上游都可在 config 里改；默认值与 nginx 原配置一致。
+- insert:
+    - id: dsh-plugin-reverse-proxy
+      name: 'dsh-plugin-reverse-proxy'
+      config:
+        listenHost: '0.0.0.0'
+        listenPort: 8080
+        listenIpv6: false
+        upstreamHost: '127.0.0.1'
+        upstreamPort: 3080
+        upstreamHostHeader: '127.0.0.1:3080'
+        upstreamOrigin: 'http://127.0.0.1:3080'
+        maxBodyBytes: 209715200
+        retryMs: 5000
