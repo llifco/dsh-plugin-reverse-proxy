@@ -16,7 +16,8 @@
     "README.md",
     "vendor",
     "dist",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "engines": {
     "node": ">=22"
@@ -38,5 +39,18 @@
       "inject": [],
       "immediately": true
     }
-  }
+  },
+  "author": {
+    "name": "云风",
+    "email": "3538638569@qq.com",
+    "url": "https://github.com/llifco"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/llifco/dsh-plugin-reverse-proxy.git"
+  },
+  "bugs": {
+    "url": "https://github.com/llifco/dsh-plugin-reverse-proxy/issues"
+  },
+  "homepage": "https://github.com/llifco/dsh-plugin-reverse-proxy#readme"
 }
