@@ -18,6 +18,7 @@
 
 import http from 'node:http'
 import net from 'node:net'
+import { apply as applyTrustedConnection } from './vendor/skip/host.js'
 
 const HOP_BY_HOP = new Set([
   'connection', 'proxy-connection', 'keep-alive', 'te', 'trailer',
@@ -76,7 +77,7 @@ function downHeaders(headers) {
   return out
 }
 
-export function apply(ctx, config) {
+function applyProxy(ctx, config) {
   const cfg = normalize(config)
   const log = (level, msg) => {
     try {
@@ -216,4 +217,23 @@ export function apply(ctx, config) {
   return dispose
 }
 
+
+/**
+ * 一个包承载多种 Cordis 行：
+ *   - id 含 trusted-connection → 免 Token 登录（替换官方 Connection 提供方）
+ *   - 其余（反代本体）→ 起 8080 反向代理
+ */
+export async function apply(ctx, config) {
+  const entryId = ctx && ctx.fiber && ctx.fiber.entry && ctx.fiber.entry.options
+    ? ctx.fiber.entry.options.id
+    : undefined
+  if (typeof entryId === 'string' && entryId.includes('trusted-connection')) {
+    return applyTrustedConnection(ctx, config)
+  }
+  return applyProxy(ctx, config)
+}
+
 export const name = 'dsh-plugin-reverse-proxy'
+
+/** host.js 的免登录半区要用 ctx.webServer.register 注册路由 */
+export const inject = ['webServer']
