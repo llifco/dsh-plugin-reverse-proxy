@@ -1,11 +1,23 @@
-# dsh-plugin-reverse-proxy
+<p align="center">
+  <img src="assets/logo.jpg" width="132" alt="大肥鱼">
+</p>
 
-> DSH Web 的两个「网络入口」能力，合成一个插件：**局域网反向代理** + **免 Token 登录**。
->
-> **当前版本：v0.2.0**　｜　改了什么见 [CHANGELOG.md](CHANGELOG.md)　｜　反馈请看文末
+<h1 align="center">dsh-plugin-reverse-proxy</h1>
 
-一条命令装上，局域网里的手机、平板、另一台电脑就能直接打开你的 DSH 网页界面，
-**而且不用再从启动日志里抄那串随机 token**。
+<p align="center">简体中文 ｜ <a href="README.en.md">English</a></p>
+
+<p align="center">
+  <a href="#"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="license"></a>
+  <a href="#"><img src="https://img.shields.io/badge/dependencies-0-brightgreen.svg" alt="dependencies"></a>
+  <a href="#"><img src="https://img.shields.io/badge/build-none-brightgreen.svg" alt="build"></a>
+  <a href="#"><img src="https://img.shields.io/badge/dsh-0.2.2--rc.1-blueviolet.svg" alt="dsh"></a>
+  <a href="#"><img src="https://img.shields.io/badge/status-beta-orange.svg" alt="status"></a>
+  <a href="https://github.com/llifco/dsh-plugin-reverse-proxy/releases/latest"><img src="https://img.shields.io/github/v/release/llifco/dsh-plugin-reverse-proxy?label=release" alt="release"></a>
+  <a href="https://github.com/llifco/dsh-plugin-reverse-proxy/stargazers"><img src="https://img.shields.io/github/stars/llifco/dsh-plugin-reverse-proxy" alt="stars"></a>
+</p>
+
+> 一条命令装上，局域网里的手机、平板、另一台电脑就能直接打开你的 DSH 网页界面，
+> **而且不用再从启动日志里抄那串随机 token**。
 
 ---
 
@@ -26,7 +38,7 @@
 ```
 
 `dsh web` 只监听回环，且会校验 `Host` / `Origin` 是否「像本机访问」，直接暴露到局域网会被 403。
-以前靠 nginx 反代改写请求头，现在这段逻辑跑在插件里。
+以前靠 nginx 改写请求头，现在这段逻辑跑在插件里。
 
 - 流式不缓冲（SSE、大文件下载不卡）
 - WebSocket 用 `net.connect` 手写 101 透传
@@ -36,26 +48,26 @@
 ### 2. 免 Token 登录（版本门控，命中才启用）
 
 替换官方 `@deepseek-ai/dsh-client-connection` 提供方，跳过 BrowserAuth：
-浏览器直接打开 Web 地址就能用，不用复制启动 URL 里的随机 token。
+浏览器直接打开 Web 地址就能用。
 
 - **web-only**：desktop 宿主一律休眠（多进程树判别），官方行为不受影响
 - **精确版本白名单**：runtime 与 connection 包必须成对命中已知版本，否则自动休眠、官方 connection 原样保留
-- **不修改 DSH 本体**：只通过官方插件 patch 机制替换那一行，卸载/禁用即完全恢复
+- **不改 DSH 本体**：只通过官方插件 patch 机制替换那一行，卸载/禁用即完全恢复
 - 当前覆盖：`0.1.2-rc.1` `0.1.5-rc.1/rc.2` `0.1.7-rc.1/rc.2` `0.2.0-rc.1/rc.2` `0.2.1-rc.1~rc.5` `0.2.2-rc.1`
 
-> 这部分的实现参考并内联自 [`@iasiv5/dsh-skip-browser-auth`](https://github.com/iasiv5/dsh-skip-browser-auth)（MIT），
+> 这部分参考并内联自 [`@iasiv5/dsh-skip-browser-auth`](https://github.com/iasiv5/dsh-skip-browser-auth)（MIT），
 > 在 `vendor/skip/` 下，保留其 LICENSE 与 NOTICE。
 
 ---
 
-## 适用范围（重要）
+## 适用范围
 
 | 场景 | 能不能用 |
 |---|---|
 | **Web UI 版**（浏览器打开 `http://<局域网IP>:8080`） | ✅ 就是给它用的 |
 | **桌面版 / 客户端版** | ❌ 用不上，也不建议用 |
 
-桌面版本来就在本机跑，直连 `127.0.0.1:3080` 即可，**不需要反代，也不需要跳过认证**。
+桌面版本来就在本机跑，直连 `127.0.0.1:3080` 即可，不需要反代，也不需要跳过认证。
 
 ---
 
@@ -67,10 +79,10 @@ cd dsh-plugin-reverse-proxy
 dsh plugin --profile web add .
 ```
 
-或用打包好的版本（见 `dist/`）：
+或用 Release 里的包：
 
 ```bash
-dsh plugin --profile web add ./dist/dsh-plugin-reverse-proxy-0.2.0.tgz
+dsh plugin --profile web add ./dsh-plugin-reverse-proxy-0.2.0.tgz
 ```
 
 装完重启一次宿主：
@@ -103,6 +115,27 @@ systemctl restart dsh
 
 ---
 
+## 目录结构
+
+```
+dsh-plugin-reverse-proxy/
+├── index.js                  # 入口：按 cordis 行 id 分发（反代 / 免登录）
+├── cordis.patch.yml          # 官方插件 patch：版本门控 + 插入两条能力行
+├── assets/logo.jpg           # 仓库头像
+├── vendor/skip/              # 免 Token 登录实现（MIT，来自 dsh-skip-browser-auth）
+│   ├── host.js  gate.js  compatibility.js
+│   ├── trust-fence.js  trusted-auth.js  bridge.js
+│   ├── connection-runtime.js
+│   ├── adapters/             # carrier-neutral / -017 / -021
+│   └── client.js             # 浏览器端 bundle（已注入）
+├── dist/*.tgz                # 打包产物（离线安装用）
+├── CHANGELOG.md
+├── README.md / README.en.md
+└── LICENSE
+```
+
+---
+
 ## 卸载 / 回退到 nginx
 
 ```bash
@@ -125,22 +158,21 @@ nginx -t && systemctl reload nginx
 `ss -ltnp | grep 8080` 看占用者。还是 nginx 的话，旧的 `sites-enabled/dsh` 软链没删，两个会抢端口。
 
 **Q：打开又要 token 了？**
-说明免登录那半休眠了 —— 多半是 DSH 升级后版本不在白名单里。看日志有没有
+说明免登录那半休眠了——多半是 DSH 升级后版本不在白名单里。看日志有没有
 `BrowserAuth has been skipped`；没有就是休眠，官方行为，功能上等价。
 
 **Q：能穿透公网吗？**
-不能，也不建议。它只是把「局域网可访问」做对；公网请自己加隧道并做鉴权。
+不能，也不建议。它只把「局域网可访问」做对；公网请自己加隧道并做鉴权。
 
 **Q：桌面版能用吗？**
-用不上 —— 桌面版本机直连 `127.0.0.1:3080` 即可。
+用不上——桌面版本机直连 `127.0.0.1:3080` 即可。
 
 ---
 
-## 版本与反馈
+## 反馈
 
-- 当前版本：**v0.2.0**（更新记录：[CHANGELOG.md](CHANGELOG.md)）
 - 问题反馈 / 功能建议 / 装不上的报错：**QQ 3538638569**（3538638569@qq.com）
-  带上 `dsh --version`、`dsh plugin --profile web list` 和你看到的日志，能快很多。
+- 反馈时带上 `dsh --version`、`dsh plugin --profile web list` 和你看到的日志，能快很多。
 
 ## 许可
 
