@@ -18,6 +18,7 @@
 
 import http from 'node:http'
 import net from 'node:net'
+import zlib from 'node:zlib'
 import { apply as applyTrustedConnection } from './vendor/skip/host.js'
 
 const HOP_BY_HOP = new Set([
@@ -77,6 +78,28 @@ function downHeaders(headers) {
   return out
 }
 
+/** 只有未被上游压缩的文本类响应才值得 gzip；SSE/二进制/已压缩的直通。 */
+const COMPRESSIBLE_TYPE = /^(?:text\/|application\/(?:javascript|ecmascript|json|xml|xhtml\+xml|manifest\+json)|image\/svg\+xml)/i
+
+function wantsGzip(req, up) {
+  if (req.method === 'HEAD') return false
+  if (up.statusCode !== 200) return false
+  if (up.headers['content-encoding']) return false
+  const type = String(up.headers['content-type'] || '')
+  if (/event-stream/i.test(type)) return false
+  if (!COMPRESSIBLE_TYPE.test(type)) return false
+  return /\bgzip\b/i.test(String(req.headers['accept-encoding'] || ''))
+}
+
+/** 构建产物带内容指纹（/assets 文件 hash、/plugins 组合包 rev），可长期缓存。 */
+function isImmutableAsset(url) {
+  const raw = String(url || '')
+  const path = raw.split('?')[0]
+  if (path.startsWith('/assets/')) return true
+  if (path.startsWith('/plugins/') && /[?&]rev=[0-9a-z]{6,}/i.test(raw)) return true
+  return false
+}
+
 function applyProxy(ctx, config) {
   const cfg = normalize(config)
   const log = (level, msg) => {
@@ -102,8 +125,29 @@ function applyProxy(ctx, config) {
       headers: upstreamHeaders(req, cfg),
     }, (up) => {
       if (res.headersSent) return
-      res.writeHead(up.statusCode || 502, up.statusMessage, downHeaders(up.headers))
-      up.pipe(res)
+      const headers = downHeaders(up.headers)
+      if (isImmutableAsset(req.url)) {
+        // 内容指纹已变则 URL 变，旧缓存不会命中错误版本
+        headers['cache-control'] = 'public, max-age=31536000, immutable'
+      }
+      const gzip = wantsGzip(req, up)
+      if (gzip) {
+        delete headers['content-length']
+        headers['content-encoding'] = 'gzip'
+        if (!headers.vary) headers.vary = 'Accept-Encoding'
+      }
+      res.writeHead(up.statusCode || 502, up.statusMessage, headers)
+      if (gzip) {
+        const gz = zlib.createGzip({ level: 6 })
+        gz.on('error', () => {
+          try { up.destroy() } catch { /* 已关 */ }
+          try { res.destroy() } catch { /* 已关 */ }
+        })
+        res.on('close', () => { try { gz.destroy() } catch { /* 已关 */ } })
+        up.pipe(gz).pipe(res)
+      } else {
+        up.pipe(res)
+      }
     })
     upstream.on('error', (err) => {
       if (aborted || res.writableEnded) return
