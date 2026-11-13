@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-reverse-proxy",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "DSH Web 反向代理 + 免 Token 登录（Web UI 专用）：监听局域网端口，改写 Host/Origin/Sec-Fetch-Site 后转发到 127.0.0.1:3080，并替换官方 Connection 提供方跳过 BrowserAuth（版本门控，不匹配自动休眠）。仅适用于 Web UI 版，桌面版用不上。",
   "type": "module",
   "main": "index.js",
