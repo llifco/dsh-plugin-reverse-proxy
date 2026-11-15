@@ -20,6 +20,15 @@ import http from 'node:http'
 import net from 'node:net'
 import zlib from 'node:zlib'
 import { apply as applyTrustedConnection } from './vendor/skip/host.js'
+import {
+  describeLanState,
+  effectiveListenHost,
+  getLanState,
+  LAN_WARNING_TEXT,
+  onLanChange,
+  setLanAccess,
+  STATE_FILE,
+} from './lan-access.js'
 
 const HOP_BY_HOP = new Set([
   'connection', 'proxy-connection', 'keep-alive', 'te', 'trailer',
@@ -27,7 +36,7 @@ const HOP_BY_HOP = new Set([
 ])
 
 const DEFAULTS = {
-  listenHost: '0.0.0.0',
+  // 监听地址不再看配置：由「局域网访问开关」决定（默认 127.0.0.1，显式确认后才开 0.0.0.0）
   listenPort: 8080,
   listenIpv6: true,
   upstreamHost: '127.0.0.1',
@@ -40,6 +49,7 @@ const DEFAULTS = {
 
 const normalize = (config) => {
   const c = { ...DEFAULTS, ...(config || {}) }
+  c.listenHost = effectiveListenHost()
   c.listenPort = Number(c.listenPort) || DEFAULTS.listenPort
   c.upstreamPort = Number(c.upstreamPort) || DEFAULTS.upstreamPort
   c.maxBodyBytes = Number(c.maxBodyBytes) || DEFAULTS.maxBodyBytes
@@ -100,6 +110,152 @@ function isImmutableAsset(url) {
   return false
 }
 
+/**
+ * 局域网开关的两个入口（设置页走 HTTP，命令行走 /lan 斜杠命令）。
+ * 两边都改同一份 lan-access 状态文件，所以永远同步；改完立刻重建监听。
+ */
+function registerLanControl(ctx, cfg, log) {
+  const sendJson = (res, status, body) => {
+    const raw = JSON.stringify(body)
+    try {
+      res.writeHead(status, {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+        'content-length': Buffer.byteLength(raw),
+      })
+      res.end(raw)
+    } catch { /* 连接已断 */ }
+  }
+
+  const readBody = (req) => new Promise((resolve, reject) => {
+    let raw = ''
+    let size = 0
+    req.on('data', (chunk) => {
+      size += chunk.length
+      if (size > 4096) {
+        reject(new Error('请求体过大'))
+        req.destroy()
+        return
+      }
+      raw += chunk
+    })
+    req.on('end', () => {
+      if (raw === '') return resolve({})
+      try { resolve(JSON.parse(raw)) } catch (e) { reject(new Error('请求体不是合法 JSON')) }
+    })
+    req.on('error', reject)
+  })
+
+  const routeStatus = {
+    kind: 'exact',
+    path: '/reproxy-lan/status',
+    handler: (req, res) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        sendJson(res, 405, { ok: false, error: '只支持 GET' })
+        return
+      }
+      sendJson(res, 200, { ...describeLanState(cfg.listenPort), warning: LAN_WARNING_TEXT })
+    },
+  }
+
+  const routeSet = {
+    kind: 'exact',
+    path: '/reproxy-lan/set',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { ok: false, error: '只支持 POST' })
+        return
+      }
+      let body
+      try {
+        body = await readBody(req)
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+        return
+      }
+      // 必须由用户在弹窗里点过「确定」——前端会把它写成 confirm:true
+      if (body.confirm !== true) {
+        sendJson(res, 400, { ok: false, error: '缺少用户确认（confirm:true）', warning: LAN_WARNING_TEXT })
+        return
+      }
+      if (typeof body.enabled !== 'boolean') {
+        sendJson(res, 400, { ok: false, error: 'enabled 必须是布尔值' })
+        return
+      }
+      try {
+        setLanAccess(body.enabled, 'settings')
+        log('warn', '设置页切换局域网访问 → ' + (body.enabled ? '开启' : '关闭'))
+        sendJson(res, 200, describeLanState(cfg.listenPort))
+      } catch (e) {
+        sendJson(res, 500, { ok: false, error: e.message })
+      }
+    },
+  }
+
+  const webServer = ctx && typeof ctx.get === 'function' ? ctx.get('webServer') : null
+  if (webServer && typeof webServer.register === 'function' && typeof ctx.effect === 'function') {
+    ctx.effect(() => webServer.register(routeStatus))
+    ctx.effect(() => webServer.register(routeSet))
+  } else {
+    log('warn', 'webServer 不可用，设置页开关接口未注册')
+  }
+
+  // 命令行开关：/lan 查看，/lan yes 开启，/lan no 关闭
+  const commands = ctx && typeof ctx.get === 'function' ? ctx.get('commands') : null
+  if (!commands || typeof commands.register !== 'function') {
+    // 用 console 打：这个结论必须能在 journalctl 里看到
+    console.log('[reproxy-lan] commands 服务不可用，/lan 命令未注册')
+    return
+  }
+
+  const statusText = () => {
+    const s = getLanState()
+    const head = s.lanAccess
+      ? '局域网访问：已开启（监听 0.0.0.0:' + cfg.listenPort + '，同网段设备可直接进入后台）'
+      : '局域网访问：已关闭（只监听 127.0.0.1:' + cfg.listenPort + '，只有本机能访问）'
+    const when = s.updatedAt ? '上次修改：' + s.updatedAt + '（' + (s.updatedBy || 'unknown') + '）' : '还没有改过，当前是默认值'
+    return [head, when].join('\n')
+  }
+
+  ctx.effect(() => commands.register({
+    name: 'lan',
+    description: '查看或切换局域网访问开关（/lan yes 开启、/lan no 关闭）',
+    input: { hint: 'yes | no | status' },
+    recordInput: true,
+    handler: ({ rawInput }) => {
+      const arg = String(rawInput || '').trim().toLowerCase()
+      if (arg === '' || arg === 'status') {
+        return {
+          kind: 'success',
+          text: [statusText(), '', '要改变：/lan yes 开启（会先给出安全提示），/lan no 关闭', '', LAN_WARNING_TEXT].join('\n'),
+        }
+      }
+      if (arg === 'yes' || arg === 'on' || arg === 'true') {
+        if (getLanState().lanAccess) return { kind: 'success', text: '已经是开启状态了。\n' + statusText() }
+        try {
+          setLanAccess(true, 'command')
+        } catch (e) {
+          return { kind: 'error', text: '保存失败：' + e.message }
+        }
+        log('warn', '命令行切换局域网访问 → 开启')
+        return { kind: 'success', text: LAN_WARNING_TEXT + '\n\n已开启。\n' + statusText() }
+      }
+      if (arg === 'no' || arg === 'off' || arg === 'false') {
+        if (!getLanState().lanAccess) return { kind: 'success', text: '已经是关闭状态了。\n' + statusText() }
+        try {
+          setLanAccess(false, 'command')
+        } catch (e) {
+          return { kind: 'error', text: '保存失败：' + e.message }
+        }
+        log('info', '命令行切换局域网访问 → 关闭')
+        return { kind: 'success', text: '已关闭，其他设备会立刻断开。\n' + statusText() }
+      }
+      return { kind: 'error', text: '看不懂「' + arg + '」。用法：/lan（看状态）、/lan yes（开启）、/lan no（关闭）' }
+    },
+  }))
+  console.log('[reproxy-lan] /lan 命令已注册')
+}
+
 function applyProxy(ctx, config) {
   const cfg = normalize(config)
   const log = (level, msg) => {
@@ -113,6 +269,30 @@ function applyProxy(ctx, config) {
   const servers = []
   let retryTimer = null
   let disposed = false
+
+  /** 关掉现有监听（换地址前必须先让出端口）。 */
+  const stopListening = () => {
+    clearTimeout(retryTimer)
+    for (const s of servers) {
+      try { s.close() } catch { /* 已关 */ }
+    }
+    servers.length = 0
+  }
+
+  /**
+   * 开关变化后重建监听：先关、稍等端口释放、再按新地址监听。
+   * 不同步 close 再 listen 的话，Linux 上会拿到 EADDRINUSE 然后进重试循环。
+   */
+  let rebindTimer = null
+  const rebind = () => {
+    stopListening()
+    clearTimeout(rebindTimer)
+    rebindTimer = setTimeout(() => {
+      if (disposed) return
+      log('info', '局域网访问开关变化 → 监听地址改为 ' + effectiveListenHost())
+      startHosts()
+    }, 400)
+  }
 
   const onRequest = (req, res) => {
     let received = 0
@@ -236,19 +416,41 @@ function applyProxy(ctx, config) {
     return server
   }
 
-  try {
-    start(cfg.listenHost)
-    if (cfg.listenIpv6 && cfg.listenHost === '0.0.0.0') {
-      try { start('::') } catch (e) { log('info', 'IPv6 监听跳过: ' + e.message) }
+  const startHosts = () => {
+    const host = cfg.listenHost = effectiveListenHost()
+    start(host)
+    // IPv6 用 ipv6Only，否则 Linux 双栈会把 0.0.0.0 占的端口算作冲突
+    if (cfg.listenIpv6 && host === '0.0.0.0') {
+      try { start('::') } catch (e) { log('info', 'IPv6 监听跳过: ' + (e && e.message)) }
     }
+    if (getLanState().lanAccess) {
+      log('warn', '监听 ' + host + ':' + cfg.listenPort + ' —— 局域网访问已开启，同一网络里的任何设备都能进入 DSH 后台')
+    }
+  }
+
+  try {
+    startHosts()
   } catch (e) {
     // 插件加载期绝不抛异常：宿主崩了连修都没法修
     log('error', '反代启动失败: ' + (e && e.message))
   }
 
+  let unsubscribeLan = () => {}
+  try {
+    unsubscribeLan = onLanChange(() => rebind())
+  } catch { /* 订阅失败不连坐 */ }
+
+  try {
+    registerLanControl(ctx, cfg, log)
+  } catch (e) {
+    log('error', '局域网开关接口注册失败: ' + (e && e.message))
+  }
+
   const dispose = () => {
     disposed = true
     clearTimeout(retryTimer)
+    clearTimeout(rebindTimer)
+    try { unsubscribeLan() } catch { /* 已解除 */ }
     for (const s of servers) {
       try { s.close() } catch { /* 已关 */ }
     }

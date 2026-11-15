@@ -10,7 +10,7 @@
   <a href="#"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="license"></a>
   <a href="#"><img src="https://img.shields.io/badge/dependencies-0-brightgreen.svg" alt="dependencies"></a>
   <a href="#"><img src="https://img.shields.io/badge/build-none-brightgreen.svg" alt="build"></a>
-  <a href="#"><img src="https://img.shields.io/badge/dsh-0.2.2--rc.1-blueviolet.svg" alt="dsh"></a>
+  <a href="#"><img src="https://img.shields.io/badge/dsh-0.2.2--rc.3-blueviolet.svg" alt="dsh"></a>
   <a href="#"><img src="https://img.shields.io/badge/status-beta-orange.svg" alt="status"></a>
   <a href="https://github.com/llifco/dsh-plugin-reverse-proxy/releases/latest"><img src="https://img.shields.io/github/v/release/llifco/dsh-plugin-reverse-proxy?label=release" alt="release"></a>
   <a href="https://github.com/llifco/dsh-plugin-reverse-proxy/stargazers"><img src="https://img.shields.io/github/stars/llifco/dsh-plugin-reverse-proxy" alt="stars"></a>
@@ -44,6 +44,21 @@
 - WebSocket 用 `net.connect` 手写 101 透传
 - 长连接超时对齐 nginx 的 3600s，请求体上限 200 MiB
 - 端口被占每 5 秒重试，加载期绝不抛异常
+
+### 3. 局域网访问开关（默认关闭）
+
+默认只监听 `127.0.0.1:8080`，也就是**只有跑 DSH 的这台机器自己**能打开后台。
+要把后台共享给同一个 Wi-Fi / 局域网里的手机、平板、另一台电脑，必须在两个入口之一**显式确认**：
+
+- 设置页：**设置 → 局域网访问**，点开关 → 弹安全提示 → 点「确定」才生效。
+- 命令行（斜杠命令）：在 DSH 输入框里发 `/lan` 看状态，`/lan yes` 开启（先给出同一份安全提示），`/lan no` 关闭。
+- 命令行（终端）：`reproxy-lan status` 看状态，`reproxy-lan enable` 需敲 `yes` 确认后才开，`reproxy-lan disable` 直接关。
+
+两个入口读写同一份状态文件 `<DSH_HOME>/plugin-reverse-proxy/lan-access.json`，
+所以永远同步；切换后立即重建监听，**重启 dsh 也不会丢**，不需要重新打开。
+
+> ⚠️ 开启后，同一网络里的任何设备直接访问 `http://<这台机器的IP>:8080` 就能进入完整后台
+> （会话、终端、设置），不需要 Token、不需要登录。只在信任当前局域网时开启。
 
 ### 2. 免 Token 登录（版本门控，命中才启用）
 
@@ -101,7 +116,7 @@ systemctl restart dsh
 
 | 配置项 | 默认值 | 对应原 nginx |
 |---|---|---|
-| `listenHost` | `0.0.0.0` | `listen 8080` |
+| `listenHost` | 由「局域网访问」开关决定（默认 `127.0.0.1`） | `listen 127.0.0.1:8080` |
 | `listenPort` | `8080` | 同上 |
 | `listenIpv6` | `false` | `listen [::]:8080` |
 | `upstreamHost` / `upstreamPort` | `127.0.0.1` / `3080` | `proxy_pass` |

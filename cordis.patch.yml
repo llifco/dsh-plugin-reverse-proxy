@@ -63,7 +63,7 @@
     - id: dsh-plugin-reverse-proxy
       name: 'dsh-plugin-reverse-proxy'
       config:
-        listenHost: '0.0.0.0'
+        # 监听地址由「局域网访问」开关决定（默认 127.0.0.1），这里不再写死
         listenPort: 8080
         listenIpv6: false
         upstreamHost: '127.0.0.1'

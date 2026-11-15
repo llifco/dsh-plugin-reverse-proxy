@@ -1,7 +1,139 @@
 window.__ModuleLoader__.load({
 	id: "dsh-plugin-reverse-proxy",
 	factory: (require) => {
+		console.log('[reproxy-lan] factory start, profile =', globalThis['__DSH_SKIP_BROWSER_AUTH_PROFILE__']);
+		const __withPanel = (mod) => ({
+			...mod,
+			inject: Array.from(new Set([...(Array.isArray(mod.inject) ? mod.inject : []), 'slots'])),
+			apply: (ctx) => {
+				try { if (typeof mod.apply === 'function') mod.apply(ctx); } catch (e) { console.warn('[reproxy-lan] base apply failed', e); }
+				try { LanSettings(require).apply(ctx); } catch (e) { console.warn('[reproxy-lan] panel apply failed', e); }
+			},
+		});
 		const profile = globalThis["__DSH_SKIP_BROWSER_AUTH_PROFILE__"];
+		const LAN_WARNING_TITLE = '对局域网开放访问？';
+		const LAN_WARNING_LINES = [
+			'开启后，同一网络里的任何设备打开这台机器的 8080 端口，都能直接进入 DSH 后台，',
+			'不需要 Token、不需要登录，等于把整台机器的控制权交给同一网段的所有人。',
+			'只在你信任当前 Wi-Fi / 局域网（比如家里、自己手机的热点）时才开启。'
+		];
+		const STYLE = [
+			'.reproxy-lan{display:flex;flex-direction:column;gap:14px;padding:4px 0}',
+			'.reproxy-lan-row{display:flex;align-items:center;justify-content:space-between;gap:16px;border:1px solid var(--dsw-alias-border-l1,#333947);border-radius:10px;padding:14px 16px}',
+			'.reproxy-lan-ctl{flex:none;display:flex;align-items:center;gap:10px}',
+			'.reproxy-lan-state{font-size:12px;color:var(--dsw-alias-label-secondary,#9aa0ad);white-space:nowrap}',
+			'.reproxy-lan-title{font-size:14px;font-weight:600;color:var(--dsw-alias-label-primary,#e6e8ee)}',
+			'.reproxy-lan-desc{margin-top:6px;font-size:12px;line-height:1.7;color:var(--dsw-alias-label-secondary,#9aa0ad);max-width:560px}',
+			'.reproxy-lan-switch{flex:none;width:38px;height:22px;border-radius:999px;background:var(--dsw-alias-border-l1,#3a3f4b);position:relative;cursor:pointer;border:none;padding:0;transition:background .15s ease;display:inline-block}',
+			'.reproxy-lan-switch.on{background:var(--dsw-alias-brand-primary,#4f7cff)}',
+			'.reproxy-lan-switch i{position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.35);transition:left .15s ease}',
+			'.reproxy-lan-switch.on i{left:19px}',
+			'.reproxy-lan-switch[disabled]{opacity:.55;cursor:default}',
+			'.reproxy-lan-meta{font-size:12px;color:var(--dsw-alias-label-secondary,#9aa0ad);line-height:1.7}',
+			'.reproxy-lan-err{font-size:12px;color:#ff6b6b}',
+			'.reproxy-lan-mask{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:9999}',
+			'.reproxy-lan-card{width:min(460px,92vw);background:var(--dsw-alias-bg-layer-1,#1c1f26);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:20px;box-shadow:0 18px 48px rgba(0,0,0,.45)}',
+			'.reproxy-lan-card h3{margin:0 0 10px;font-size:15px;color:var(--dsw-alias-label-primary,#e6e8ee)}',
+			'.reproxy-lan-card p{margin:0 0 8px;font-size:13px;line-height:1.75;color:var(--dsw-alias-label-secondary,#9aa0ad)}',
+			'.reproxy-lan-card strong{color:#ffb454;font-weight:600}',
+			'.reproxy-lan-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:16px}',
+			'.reproxy-lan-btn{border-radius:8px;padding:7px 16px;font-size:13px;cursor:pointer;border:1px solid rgba(255,255,255,.14);background:transparent;color:var(--dsw-alias-label-primary,#e6e8ee)}',
+			'.reproxy-lan-btn.primary{background:var(--dsw-alias-brand-primary,#4f7cff);border-color:transparent;color:#fff}',
+			'.reproxy-lan-btn[disabled]{opacity:.55;cursor:default}'
+		].join('');
+		const LanSettings = (require) => {
+			const React = require('react');
+			const h = React.createElement;
+			const readState = () => fetch('/reproxy-lan/status', { headers: { accept: 'application/json' }, cache: 'no-store' }).then((r) => r.json());
+			const writeState = (enabled) => fetch('/reproxy-lan/set', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ enabled, confirm: true })
+			}).then((r) => r.json());
+			function Panel() {
+				const [state, setState] = React.useState(null);
+				const [asking, setAsking] = React.useState(false);
+				const [busy, setBusy] = React.useState(false);
+				const [error, setError] = React.useState('');
+				React.useEffect(() => {
+					let alive = true;
+					readState().then((body) => { if (alive) setState(body); }).catch((e) => { if (alive) setError(String((e && e.message) || e)); });
+					return () => { alive = false; };
+				}, []);
+				const apply = (enabled) => {
+					setBusy(true);
+					setError('');
+					writeState(enabled).then((body) => {
+						if (!body || body.ok !== true) throw new Error((body && body.error) || '保存失败');
+						setState(body);
+						setAsking(false);
+					}).catch((e) => setError(String((e && e.message) || e))).then(() => setBusy(false));
+				};
+				const on = !!(state && state.lanAccess);
+				const status = state === null ? '读取中…' : (on ? '已开启：同一网络里的设备都能直接进入后台' : '已关闭：只有本机能打开 127.0.0.1:' + state.port);
+				return h('div', { className: 'reproxy-lan' },
+					h('style', { 'data-plugin': 'dsh-plugin-reverse-proxy-lan' }, STYLE),
+					h('div', { className: 'reproxy-lan-row' },
+						h('div', null,
+							h('div', { className: 'reproxy-lan-title' }, '局域网访问'),
+							h('div', { className: 'reproxy-lan-desc' }, '默认只允许这台机器自己打开 8080。开启后同一 Wi-Fi / 局域网里的任何设备都能直接进入 DSH 后台，不需要登录——请在开启前确认周围没有不可信设备。')
+						),
+						h('div', { className: 'reproxy-lan-ctl' },
+							h('span', { className: 'reproxy-lan-state' }, state === null ? '' : (on ? '已开启' : '已关闭')),
+							h('button', {
+								className: 'reproxy-lan-switch' + (on ? ' on' : ''),
+								type: 'button',
+								'aria-pressed': on ? 'true' : 'false',
+								disabled: busy || state === null,
+								title: on ? '点击关闭局域网访问' : '点击开启局域网访问',
+								onClick: () => setAsking(true)
+							}, h('i'))
+						)
+					),
+					h('div', { className: 'reproxy-lan-meta' }, status),
+					state && state.updatedAt ? h('div', { className: 'reproxy-lan-meta' }, '上次修改：' + state.updatedAt + '（' + (state.updatedBy || 'unknown') + '）') : null,
+					error ? h('div', { className: 'reproxy-lan-err' }, error) : null,
+					asking ? h('div', { className: 'reproxy-lan-mask' },
+						h('div', { className: 'reproxy-lan-card' },
+							h('h3', null, LAN_WARNING_TITLE),
+							h('p', null, LAN_WARNING_LINES[0]),
+							h('p', null, LAN_WARNING_LINES[1]),
+							h('p', null, LAN_WARNING_LINES[2]),
+							h('p', null, h('strong', null, on ? '这次点击会关闭局域网访问：其他设备会立刻断开。' : '这次点击会开放访问：确定要继续吗？')),
+							h('div', { className: 'reproxy-lan-actions' },
+								h('button', { className: 'reproxy-lan-btn', type: 'button', disabled: busy, onClick: () => setAsking(false) }, '取消'),
+								h('button', { className: 'reproxy-lan-btn primary', type: 'button', disabled: busy, onClick: () => apply(!on) }, busy ? '处理中…' : '确定')
+							)
+						)
+					) : null
+				);
+			}
+			return { inject: ['slots'], apply: (ctx) => {
+				const register = () => {
+					const slots = ctx && typeof ctx.get === 'function' ? ctx.get('slots') : undefined;
+					if (!slots || typeof slots.inject !== 'function' || typeof slots.register !== 'function') return false;
+					slots.inject('settings.section', () => slots.register({ name: 'settings.section', id: 'reproxy-lan', order: 30, label: '局域网访问' }, () => h(Panel)));
+					// 插件详情页也挂一份（插件 → 反向代理）：设置页被别的插件挤掉时还能从这里进
+					try {
+						slots.inject('plugins.bundle.config', () => slots.register({ name: 'plugins.bundle.config', key: 'dsh-plugin-reverse-proxy' }, () => h(Panel)));
+					} catch (e) { /* 宿主没这个槽就算了 */ }
+					console.log('[reproxy-lan] 设置面板已注册');
+					return true;
+				};
+				try {
+					if (register()) return;
+				} catch (e) {
+					console.warn('[reproxy-lan] register failed', e);
+				}
+				console.log('[reproxy-lan] slots 还没就绪，开始重试');
+				let tries = 0;
+				const timer = setInterval(() => {
+					tries += 1;
+					try { if (register() || tries > 50) clearInterval(timer); } catch (e) { clearInterval(timer); console.warn('[reproxy-lan] register retry failed', e); }
+				}, 200);
+			} };
+		};
+		// 面板定义提前到这里：分支里的 return 会跳过函数体后半段，晚定义会 TDZ
     // rc12: official @deepseek-ai/dsh-client-connection/client factory; selected only by an explicit host profile.
     if (profile === "legacy-web-v1") {
       return ((require) => {
@@ -12765,7 +12897,7 @@ window.__ModuleLoader__.load({
     }
     // rc21: official dsh-client-connection-rc21/package.json factory; selected only by an explicit host profile.
     if (profile === "carrier-neutral-v4") {
-      return ((require) => {
+      return __withPanel(((require) => {
 		var module = { exports: {} };
 		var exports = module.exports;
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
@@ -14282,10 +14414,11 @@ window.__ModuleLoader__.load({
 		exports.installConnection = installConnection;
 		exports.transportError = transportError;
 		return module.exports;
-      })(require)
+      })(require))
     }
 		// dormant（desktop/未知 pair）：客户端静默 no-op，绝不 throw——休眠时宿主仍注入
 		// client bundle，global 缺失，throw 会打断客户端启动链并炸宿主（0.3.9 desktop 事故）。
-		return { inject: [], apply: () => {} };
+		// 0.3.2：休眠态下只挂「局域网访问」设置页开关（连接半区仍然 no-op）。
+		return LanSettings(require);
 	}
 });

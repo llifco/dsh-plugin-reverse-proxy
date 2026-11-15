@@ -10,7 +10,7 @@
   <a href="#"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="license"></a>
   <a href="#"><img src="https://img.shields.io/badge/dependencies-0-brightgreen.svg" alt="dependencies"></a>
   <a href="#"><img src="https://img.shields.io/badge/build-none-brightgreen.svg" alt="build"></a>
-  <a href="#"><img src="https://img.shields.io/badge/dsh-0.2.2--rc.1-blueviolet.svg" alt="dsh"></a>
+  <a href="#"><img src="https://img.shields.io/badge/dsh-0.2.2--rc.3-blueviolet.svg" alt="dsh"></a>
   <a href="#"><img src="https://img.shields.io/badge/status-beta-orange.svg" alt="status"></a>
   <a href="https://github.com/llifco/dsh-plugin-reverse-proxy/releases/latest"><img src="https://img.shields.io/github/v/release/llifco/dsh-plugin-reverse-proxy?label=release" alt="release"></a>
   <a href="https://github.com/llifco/dsh-plugin-reverse-proxy/stargazers"><img src="https://img.shields.io/github/stars/llifco/dsh-plugin-reverse-proxy" alt="stars"></a>
@@ -102,7 +102,7 @@ Reverse proxy (the `dsh-plugin-reverse-proxy` row in `cordis.patch.yml`):
 
 | Key | Default | Former nginx directive |
 |---|---|---|
-| `listenHost` | `0.0.0.0` | `listen 8080` |
+| `listenHost` | decided by the LAN switch (default `127.0.0.1`) | `listen 127.0.0.1:8080` |
 | `listenPort` | `8080` | same |
 | `listenIpv6` | `false` | `listen [::]:8080` |
 | `upstreamHost` / `upstreamPort` | `127.0.0.1` / `3080` | `proxy_pass` |
