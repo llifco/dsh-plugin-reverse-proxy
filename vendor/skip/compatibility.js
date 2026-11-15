@@ -153,6 +153,20 @@ export const COMPATIBILITY_PROFILES = [
         // and the runtime diff is chunk-hash renames with the loader resolveSync
         // seam line-identical. The real 0.2.2-rc.1 fixture composition exercises
         // the new webserver/frontend-static packages directly (§5.14 item 5).
+        //
+        // 0.2.2-rc.2 and 0.2.2-rc.3 joined this generation after a per-dimension
+        // tarball audit (§5.15): both are republish-grade bumps on the
+        // replacement face. connection lib/index.js and lib/client.node.js are
+        // byte-identical to rc.1 and to each other; the bundled browser client
+        // differs only by minification (same 78 function names, same declaration
+        // order, byte-identical package bytes for rc.2 vs rc.3) while keeping the
+        // same module id, the same five exports (apply / inject /
+        // installConnection / RpcId / transportError) and the same
+        // __DSH_TRANSPORT__ / __DSH_CONNECTION_RECOVERY__ globals. The official
+        // patch's connection row stays field-identical (same id, same
+        // @deepseek-ai/dsh-client-connection, inject [webStartup], trustedHosts
+        // !!js ctx.webStartup.trustedHosts), and dsh-host-webserver /
+        // dsh-web-app ship no non-map, non-manifest change against rc.2/rc.3.
         // rc21 keeps anchoring at 0.2.1-rc.1; no second build input is introduced.
         id: 'carrier-neutral-v4',
         pairs: [
@@ -162,6 +176,8 @@ export const COMPATIBILITY_PROFILES = [
             { runtime: '0.2.1-rc.4', connection: '0.2.1-rc.4' },
             { runtime: '0.2.1-rc.5', connection: '0.2.1-rc.5' },
             { runtime: '0.2.2-rc.1', connection: '0.2.2-rc.1' },
+            { runtime: '0.2.2-rc.2', connection: '0.2.2-rc.2' },
+            { runtime: '0.2.2-rc.3', connection: '0.2.2-rc.3' },
         ],
         hostAdapter: 'carrier-neutral-021',
         clientVariant: 'rc21',
