@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-reverse-proxy",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "DSH Web 反向代理 + 免 Token 登录（Web UI 专用）：监听局域网端口，改写 Host/Origin/Sec-Fetch-Site 后转发到 127.0.0.1:3080，并替换官方 Connection 提供方跳过 BrowserAuth（版本门控，不匹配自动休眠）。仅适用于 Web UI 版，桌面版用不上。",
   "type": "module",
   "main": "index.js",
@@ -13,11 +13,13 @@
   "files": [
     "index.js",
     "cordis.patch.yml",
+    "lan-access.js",
     "README.md",
+    "README.en.md",
+    "assets",
     "vendor",
     "LICENSE",
-    "CHANGELOG.md",
-    "lan-access.js"
+    "CHANGELOG.md"
   ],
   "engines": {
     "node": ">=22"
