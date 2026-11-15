@@ -21,7 +21,7 @@
 
 ---
 
-## Two capabilities
+## Three capabilities
 
 ### 1. Reverse proxy (on by default)
 
@@ -45,7 +45,39 @@ returns 403. nginx used to rewrite those headers; now the plugin does.
 - 3600s long-connection timeout to match nginx; 200 MiB request body cap
 - retries every 5s when the port is taken; never throws during load
 
-### 2. Token-free login (version-gated)
+### 2. LAN access switch (off by default)
+
+The proxy only listens on `127.0.0.1:8080` — reachable from **this machine only**.
+To share the UI with a phone, tablet or another computer on the same Wi-Fi / LAN you must
+explicitly turn it on through one of three entries, all backed by the same state file:
+
+```bash
+# terminal
+reproxy-lan status     # show state
+reproxy-lan enable     # prints the warning, needs the word yes
+reproxy-lan disable    # turn off immediately
+```
+
+```
+/lan status    /lan yes    /lan no      # or the slash command in the DSH input box
+```
+
+or **Settings → 局域网访问 (LAN access)** → flip the switch → confirm the warning dialog.
+
+Terminal example (`status` → `enable` → typing `yes` → listening on `0.0.0.0:8080`):
+
+![reproxy-lan in a terminal](assets/lan-access-cli.jpg)
+
+State lives in `<DSH_HOME>/plugin-reverse-proxy/lan-access.json`, so it survives
+`systemctl restart dsh`; edits to that file are picked up within a second (`fs.watch`).
+
+> ⚠️ Once enabled, any device on the same network can open `http://<machine-ip>:8080` and get
+> the full back end (sessions, terminal, settings) with no token and no login.
+> Only enable it on a network you trust.
+
+---
+
+### 3. Token-free login (version-gated)
 
 Replaces the official `@deepseek-ai/dsh-client-connection` provider and skips BrowserAuth.
 
@@ -54,7 +86,7 @@ Replaces the official `@deepseek-ai/dsh-client-connection` provider and skips Br
   otherwise it sleeps and the official connection row stays as-is
 - **no patching of DSH itself**: only the official plugin patch mechanism is used; remove or
   disable the plugin and everything is back
-- covered: `0.1.2-rc.1` `0.1.5-rc.1/rc.2` `0.1.7-rc.1/rc.2` `0.2.0-rc.1/rc.2` `0.2.1-rc.1~rc.5` `0.2.2-rc.1`
+- covered: `0.1.2-rc.1` `0.1.5-rc.1/rc.2` `0.1.7-rc.1/rc.2` `0.2.0-rc.1/rc.2` `0.2.1-rc.1~rc.5` `0.2.2-rc.1/rc.2/rc.3`
 
 > Based on and partly inlined from [`@iasiv5/dsh-skip-browser-auth`](https://github.com/iasiv5/dsh-skip-browser-auth) (MIT),
 > kept under `vendor/skip/` with its LICENSE and NOTICE.
@@ -65,7 +97,7 @@ Replaces the official `@deepseek-ai/dsh-client-connection` provider and skips Br
 
 | Where | Supported |
 |---|---|
-| **Web UI** (`http://<LAN-IP>:8080` in a browser) | ✅ what it is for |
+| **Web UI** (`http://<LAN-IP>:8080`, LAN access switch must be on) | ✅ what it is for |
 | **Desktop / client app** | ❌ pointless there |
 
 The desktop app runs locally and can hit `127.0.0.1:3080` directly — no proxy, no auth skip needed.
@@ -83,7 +115,7 @@ dsh plugin --profile web add .
 or install the tarball from the releases page:
 
 ```bash
-dsh plugin --profile web add ./dsh-plugin-reverse-proxy-0.2.0.tgz
+dsh plugin --profile web add ./dsh-plugin-reverse-proxy-0.3.3.tgz
 ```
 
 Restart the host once:
@@ -92,7 +124,9 @@ Restart the host once:
 systemctl restart dsh
 ```
 
-Then open `http://<LAN-IP>:8080` — no token.
+By default it listens on `127.0.0.1:8080` only, so first check `http://127.0.0.1:8080` locally.
+To let other devices in, enable the LAN access switch (`reproxy-lan enable`, `/lan yes`, or
+Settings → LAN access) and then open `http://<LAN-IP>:8080` — no token.
 
 ---
 
@@ -153,6 +187,10 @@ nginx -t && systemctl reload nginx
 ---
 
 ## FAQ
+
+**Only this machine can open it; my phone cannot?**
+That is the 0.3.2+ default (`127.0.0.1` only). Enable the switch — `reproxy-lan enable`,
+`/lan yes`, or Settings → LAN access. `ss -ltnp | grep 8080` should then show `0.0.0.0:8080`.
 
 **Port 8080 still dead after install?**
 `ss -ltnp | grep 8080` — if nginx still owns it, the old `sites-enabled/dsh` symlink is still there.
