@@ -23,6 +23,9 @@
 
 ## Three capabilities
 
+> Since 0.3.5: the settings switch is purple, and the **listening port** is editable
+> (default 8080, applied on save, kept across restarts).
+
 ### 1. Reverse proxy (on by default)
 
 ```
@@ -45,7 +48,7 @@ returns 403. nginx used to rewrite those headers; now the plugin does.
 - 3600s long-connection timeout to match nginx; 200 MiB request body cap
 - retries every 5s when the port is taken; never throws during load
 
-### 2. LAN access switch (off by default)
+### 2. LAN access switch and port (off by default / 8080)
 
 The proxy only listens on `127.0.0.1:8080` — reachable from **this machine only**.
 To share the UI with a phone, tablet or another computer on the same Wi-Fi / LAN you must
@@ -56,6 +59,7 @@ explicitly turn it on through one of three entries, all backed by the same state
 reproxy-lan status     # show state
 reproxy-lan enable     # prints the warning, needs the word yes
 reproxy-lan disable    # turn off immediately
+reproxy-lan port 9000  # change the listening port (1024-65535; 3080 is DSH's own)
 ```
 
 ```
@@ -68,8 +72,21 @@ Terminal example (`status` → `enable` → typing `yes` → listening on `0.0.0
 
 ![reproxy-lan in a terminal](assets/lan-access-cli.jpg)
 
-State lives in `<DSH_HOME>/plugin-reverse-proxy/lan-access.json`, so it survives
-`systemctl restart dsh`; edits to that file are picked up within a second (`fs.watch`).
+### Changing the port (default 8080)
+
+The same settings page has a **port** field: type a number → **Save** → the listener is
+rebuilt immediately (**no restart needed**) and the value survives restarts.
+Rules: 1024–65535, never 3080 (that is DSH itself); an unavailable port returns 409 and
+nothing changes.
+
+```
+/lan port           show the current port
+/lan port 9000      change it (or `reproxy-lan port 9000` over SSH)
+```
+
+State lives in `<DSH_HOME>/plugin-reverse-proxy/lan-access.json`
+(`{"lanAccess": true, "port": 8080, ...}`), so it survives `systemctl restart dsh`;
+edits to that file are picked up within a second (`fs.watch`).
 
 > ⚠️ Once enabled, any device on the same network can open `http://<machine-ip>:8080` and get
 > the full back end (sessions, terminal, settings) with no token and no login.
@@ -97,7 +114,7 @@ Replaces the official `@deepseek-ai/dsh-client-connection` provider and skips Br
 
 | Where | Supported |
 |---|---|
-| **Web UI** (`http://<LAN-IP>:8080`, LAN access switch must be on) | ✅ what it is for |
+| **Web UI** (`http://<LAN-IP>:8080`, port configurable, LAN access switch must be on) | ✅ what it is for |
 | **Desktop / client app** | ❌ pointless there |
 
 The desktop app runs locally and can hit `127.0.0.1:3080` directly — no proxy, no auth skip needed.
