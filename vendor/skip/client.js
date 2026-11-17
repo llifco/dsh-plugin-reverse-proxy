@@ -24,10 +24,18 @@ window.__ModuleLoader__.load({
 			'.reproxy-lan-state{font-size:12px;color:var(--dsw-alias-label-secondary,#9aa0ad);white-space:nowrap}',
 			'.reproxy-lan-title{font-size:14px;font-weight:600;color:var(--dsw-alias-label-primary,#e6e8ee)}',
 			'.reproxy-lan-desc{margin-top:6px;font-size:12px;line-height:1.7;color:var(--dsw-alias-label-secondary,#9aa0ad);max-width:560px}',
-			'.reproxy-lan-switch{flex:none;width:38px;height:22px;border-radius:999px;background:var(--dsw-alias-border-l1,#3a3f4b);position:relative;cursor:pointer;border:none;padding:0;transition:background .15s ease;display:inline-block}',
-			'.reproxy-lan-switch.on{background:var(--dsw-alias-brand-primary,#4f7cff)}',
-			'.reproxy-lan-switch i{position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.35);transition:left .15s ease}',
+			'.reproxy-lan-switch{flex:none;width:38px;height:22px;border-radius:999px;background:rgba(255,255,255,.18);position:relative;cursor:pointer;border:none;padding:0;transition:background .15s ease;display:inline-block}',
+			'.reproxy-lan-switch.on{background:#8b5cf6}',
+			'.reproxy-lan-switch.on:hover{background:#9b71f8}',
+			'.reproxy-lan-switch i{position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.45);transition:left .15s ease}',
 			'.reproxy-lan-switch.on i{left:19px}',
+			'.reproxy-lan-port{flex:none;display:flex;align-items:center;gap:10px}',
+			'.reproxy-lan-input{width:96px;padding:7px 10px;border-radius:8px;border:1px solid var(--dsw-alias-border-l1,#3a3f4b);background:rgba(0,0,0,.22);color:var(--dsw-alias-label-primary,#e6e8ee);font-size:13px;font-variant-numeric:tabular-nums;text-align:center}',
+			'.reproxy-lan-input:focus{outline:none;border-color:#8b5cf6}',
+			'.reproxy-lan-save{border-radius:8px;padding:7px 14px;font-size:13px;cursor:pointer;border:1px solid transparent;background:#8b5cf6;color:#fff}',
+			'.reproxy-lan-save:hover{background:#9b71f8}',
+			'.reproxy-lan-save[disabled]{opacity:.5;cursor:default}',
+			'.reproxy-lan-ok{font-size:12px;color:#5ee08a}',
 			'.reproxy-lan-switch[disabled]{opacity:.55;cursor:default}',
 			'.reproxy-lan-meta{font-size:12px;color:var(--dsw-alias-label-secondary,#9aa0ad);line-height:1.7}',
 			'.reproxy-lan-err{font-size:12px;color:#ff6b6b}',
@@ -38,7 +46,7 @@ window.__ModuleLoader__.load({
 			'.reproxy-lan-card strong{color:#ffb454;font-weight:600}',
 			'.reproxy-lan-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:16px}',
 			'.reproxy-lan-btn{border-radius:8px;padding:7px 16px;font-size:13px;cursor:pointer;border:1px solid rgba(255,255,255,.14);background:transparent;color:var(--dsw-alias-label-primary,#e6e8ee)}',
-			'.reproxy-lan-btn.primary{background:var(--dsw-alias-brand-primary,#4f7cff);border-color:transparent;color:#fff}',
+			'.reproxy-lan-btn.primary{background:#8b5cf6;border-color:transparent;color:#fff}',
 			'.reproxy-lan-btn[disabled]{opacity:.55;cursor:default}'
 		].join('');
 		const LanSettings = (require) => {
@@ -50,14 +58,27 @@ window.__ModuleLoader__.load({
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ enabled, confirm: true })
 			}).then((r) => r.json());
+			const writePort = (port) => fetch('/reproxy-lan/port', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ port })
+			}).then((r) => r.json());
 			function Panel() {
 				const [state, setState] = React.useState(null);
 				const [asking, setAsking] = React.useState(false);
 				const [busy, setBusy] = React.useState(false);
 				const [error, setError] = React.useState('');
+				const [portDraft, setPortDraft] = React.useState('');
+				const [portBusy, setPortBusy] = React.useState(false);
+				const [portMsg, setPortMsg] = React.useState('');
+				const [portBad, setPortBad] = React.useState(false);
 				React.useEffect(() => {
 					let alive = true;
-					readState().then((body) => { if (alive) setState(body); }).catch((e) => { if (alive) setError(String((e && e.message) || e)); });
+					readState().then((body) => {
+						if (!alive) return;
+						setState(body);
+						setPortDraft(body && body.port ? String(body.port) : '');
+					}).catch((e) => { if (alive) setError(String((e && e.message) || e)); });
 					return () => { alive = false; };
 				}, []);
 				const apply = (enabled) => {
@@ -66,17 +87,36 @@ window.__ModuleLoader__.load({
 					writeState(enabled).then((body) => {
 						if (!body || body.ok !== true) throw new Error((body && body.error) || '保存失败');
 						setState(body);
+						if (body.port) setPortDraft(String(body.port));
 						setAsking(false);
 					}).catch((e) => setError(String((e && e.message) || e))).then(() => setBusy(false));
 				};
+				const savePort = () => {
+					const n = Number(String(portDraft).trim());
+					const fail = (msg) => { setPortBad(true); setPortMsg(msg); };
+					if (!Number.isInteger(n)) return fail('端口必须是整数');
+					if (n < 1024 || n > 65535) return fail('端口要在 1024–65535 之间');
+					if (n === 3080) return fail('3080 是 DSH 自己的端口，反代不能占它');
+					if (state && n === state.port) { setPortBad(false); setPortMsg('端口没变，还是 ' + n); return; }
+					setPortBusy(true);
+					setPortMsg('');
+					writePort(n).then((body) => {
+						if (!body || body.ok !== true) throw new Error((body && body.error) || '保存失败');
+						setState(body);
+						setPortDraft(String(body.port));
+						setPortBad(false);
+						setPortMsg('已保存，正在切到 ' + body.port + ' 端口');
+					}).catch((e) => fail(String((e && e.message) || e))).then(() => setPortBusy(false));
+				};
 				const on = !!(state && state.lanAccess);
-				const status = state === null ? '读取中…' : (on ? '已开启：同一网络里的设备都能直接进入后台' : '已关闭：只有本机能打开 127.0.0.1:' + state.port);
+				const port = state && state.port ? state.port : 8080;
+				const status = state === null ? '读取中…' : (on ? '已开启：同一网络里的设备都能直接进入 0.0.0.0:' + port : '已关闭：只有本机能打开 127.0.0.1:' + port);
 				return h('div', { className: 'reproxy-lan' },
 					h('style', { 'data-plugin': 'dsh-plugin-reverse-proxy-lan' }, STYLE),
 					h('div', { className: 'reproxy-lan-row' },
 						h('div', null,
 							h('div', { className: 'reproxy-lan-title' }, '局域网访问'),
-							h('div', { className: 'reproxy-lan-desc' }, '默认只允许这台机器自己打开 8080。开启后同一 Wi-Fi / 局域网里的任何设备都能直接进入 DSH 后台，不需要登录——请在开启前确认周围没有不可信设备。')
+							h('div', { className: 'reproxy-lan-desc' }, '默认只允许这台机器自己打开 ' + port + ' 端口。开启后同一 Wi-Fi / 局域网里的任何设备都能直接进入 DSH 后台，不需要登录——请在开启前确认周围没有不可信设备。')
 						),
 						h('div', { className: 'reproxy-lan-ctl' },
 							h('span', { className: 'reproxy-lan-state' }, state === null ? '' : (on ? '已开启' : '已关闭')),
@@ -90,6 +130,31 @@ window.__ModuleLoader__.load({
 							}, h('i'))
 						)
 					),
+					h('div', { className: 'reproxy-lan-row' },
+						h('div', null,
+							h('div', { className: 'reproxy-lan-title' }, '监听端口'),
+							h('div', { className: 'reproxy-lan-desc' }, '默认 8080。改完点「保存」立即生效，不用重启 dsh，重启后也会保留。允许 1024–65535，不能占用 3080。')
+						),
+						h('div', { className: 'reproxy-lan-port' },
+							h('input', {
+								className: 'reproxy-lan-input',
+								type: 'number',
+								min: 1024,
+								max: 65535,
+								value: portDraft,
+								disabled: portBusy || state === null,
+								placeholder: '8080',
+								onChange: (e) => { setPortDraft(e.target.value); setPortMsg(''); setPortBad(false); }
+							}),
+							h('button', {
+								className: 'reproxy-lan-save',
+								type: 'button',
+								disabled: portBusy || state === null,
+								onClick: savePort
+							}, portBusy ? '保存中…' : '保存')
+						)
+					),
+					portMsg ? h('div', { className: portBad ? 'reproxy-lan-err' : 'reproxy-lan-ok' }, portMsg) : null,
 					h('div', { className: 'reproxy-lan-meta' }, status),
 					state && state.updatedAt ? h('div', { className: 'reproxy-lan-meta' }, '上次修改：' + state.updatedAt + '（' + (state.updatedBy || 'unknown') + '）') : null,
 					error ? h('div', { className: 'reproxy-lan-err' }, error) : null,
