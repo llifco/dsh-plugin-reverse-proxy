@@ -21,13 +21,17 @@ import net from 'node:net'
 import zlib from 'node:zlib'
 import { apply as applyTrustedConnection } from './vendor/skip/host.js'
 import {
+  DEFAULT_PORT,
   describeLanState,
   effectiveListenHost,
+  effectivePort,
   getLanState,
   LAN_WARNING_TEXT,
   onLanChange,
   setLanAccess,
+  setPort,
   STATE_FILE,
+  validatePort,
 } from './lan-access.js'
 
 const HOP_BY_HOP = new Set([
@@ -36,8 +40,9 @@ const HOP_BY_HOP = new Set([
 ])
 
 const DEFAULTS = {
-  // 监听地址不再看配置：由「局域网访问开关」决定（默认 127.0.0.1，显式确认后才开 0.0.0.0）
-  listenPort: 8080,
+  // 监听地址/端口都不再听配置：地址由「局域网访问开关」决定，
+  // 端口由设置页/命令行改完存进状态文件（默认 8080），重启保留。
+  listenPort: DEFAULT_PORT,
   listenIpv6: true,
   upstreamHost: '127.0.0.1',
   upstreamPort: 3080,
@@ -50,7 +55,7 @@ const DEFAULTS = {
 const normalize = (config) => {
   const c = { ...DEFAULTS, ...(config || {}) }
   c.listenHost = effectiveListenHost()
-  c.listenPort = Number(c.listenPort) || DEFAULTS.listenPort
+  c.listenPort = effectivePort()
   c.upstreamPort = Number(c.upstreamPort) || DEFAULTS.upstreamPort
   c.maxBodyBytes = Number(c.maxBodyBytes) || DEFAULTS.maxBodyBytes
   if (!c.upstreamHostHeader) c.upstreamHostHeader = '127.0.0.1:' + c.upstreamPort
@@ -154,7 +159,7 @@ function registerLanControl(ctx, cfg, log) {
         sendJson(res, 405, { ok: false, error: '只支持 GET' })
         return
       }
-      sendJson(res, 200, { ...describeLanState(cfg.listenPort), warning: LAN_WARNING_TEXT })
+      sendJson(res, 200, { ...describeLanState(), warning: LAN_WARNING_TEXT })
     },
   }
 
@@ -185,7 +190,62 @@ function registerLanControl(ctx, cfg, log) {
       try {
         setLanAccess(body.enabled, 'settings')
         log('warn', '设置页切换局域网访问 → ' + (body.enabled ? '开启' : '关闭'))
-        sendJson(res, 200, describeLanState(cfg.listenPort))
+        sendJson(res, 200, describeLanState())
+      } catch (e) {
+        sendJson(res, 500, { ok: false, error: e.message })
+      }
+    },
+  }
+
+
+  /**
+   * 改端口：先试着 bind 一下确认没被占，再写状态文件并重建监听。
+   * 不先探测的话，端口被占会掉进 retryMs 重试循环，用户在界面上只看到「保存成功但不通」。
+   */
+  const checkPortFree = (port, host) => new Promise((resolve) => {
+    const probe = net.createServer()
+    probe.once('error', (err) => resolve({ ok: false, error: err && err.code === 'EADDRINUSE' ? ('端口 ' + port + ' 已被占用') : ('端口检查失败：' + (err && err.message)) }))
+    probe.once('listening', () => probe.close(() => resolve({ ok: true })))
+    try {
+      probe.listen({ port, host: host === '0.0.0.0' ? '0.0.0.0' : '127.0.0.1' })
+    } catch (e) {
+      resolve({ ok: false, error: '端口检查失败：' + (e && e.message) })
+    }
+  })
+
+  const routePort = {
+    kind: 'exact',
+    path: '/reproxy-lan/port',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { ok: false, error: '只支持 POST' })
+        return
+      }
+      let body
+      try {
+        body = await readBody(req)
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+        return
+      }
+      const parsed = validatePort(body.port)
+      if (!parsed.ok) {
+        sendJson(res, 400, { ok: false, error: parsed.error })
+        return
+      }
+      if (parsed.port === cfg.listenPort) {
+        sendJson(res, 200, describeLanState())
+        return
+      }
+      const free = await checkPortFree(parsed.port, effectiveListenHost())
+      if (!free.ok) {
+        sendJson(res, 409, { ok: false, error: free.error })
+        return
+      }
+      try {
+        setPort(parsed.port, 'settings')
+        log('info', '设置页把监听端口改为 ' + parsed.port)
+        sendJson(res, 200, describeLanState())
       } catch (e) {
         sendJson(res, 500, { ok: false, error: e.message })
       }
@@ -196,6 +256,7 @@ function registerLanControl(ctx, cfg, log) {
   if (webServer && typeof webServer.register === 'function' && typeof ctx.effect === 'function') {
     ctx.effect(() => webServer.register(routeStatus))
     ctx.effect(() => webServer.register(routeSet))
+    ctx.effect(() => webServer.register(routePort))
   } else {
     log('warn', 'webServer 不可用，设置页开关接口未注册')
   }
@@ -210,24 +271,25 @@ function registerLanControl(ctx, cfg, log) {
 
   const statusText = () => {
     const s = getLanState()
+    const port = effectivePort()
     const head = s.lanAccess
-      ? '局域网访问：已开启（监听 0.0.0.0:' + cfg.listenPort + '，同网段设备可直接进入后台）'
-      : '局域网访问：已关闭（只监听 127.0.0.1:' + cfg.listenPort + '，只有本机能访问）'
+      ? '局域网访问：已开启（监听 0.0.0.0:' + port + '，同网段设备可直接进入后台）'
+      : '局域网访问：已关闭（只监听 127.0.0.1:' + port + '，只有本机能访问）'
     const when = s.updatedAt ? '上次修改：' + s.updatedAt + '（' + (s.updatedBy || 'unknown') + '）' : '还没有改过，当前是默认值'
     return [head, when].join('\n')
   }
 
   ctx.effect(() => commands.register({
     name: 'lan',
-    description: '查看或切换局域网访问开关（/lan yes 开启、/lan no 关闭）',
-    input: { hint: 'yes | no | status' },
+    description: '查看或切换局域网访问开关与端口（/lan yes / /lan no / /lan port 9000）',
+    input: { hint: 'yes | no | status | port <n>' },
     recordInput: true,
     handler: ({ rawInput }) => {
       const arg = String(rawInput || '').trim().toLowerCase()
       if (arg === '' || arg === 'status') {
         return {
           kind: 'success',
-          text: [statusText(), '', '要改变：/lan yes 开启（会先给出安全提示），/lan no 关闭', '', LAN_WARNING_TEXT].join('\n'),
+          text: [statusText(), '', '要改变：/lan yes 开启（会先给出安全提示）、/lan no 关闭、/lan port 9000 改端口', '', LAN_WARNING_TEXT].join('\n'),
         }
       }
       if (arg === 'yes' || arg === 'on' || arg === 'true') {
@@ -250,7 +312,26 @@ function registerLanControl(ctx, cfg, log) {
         log('info', '命令行切换局域网访问 → 关闭')
         return { kind: 'success', text: '已关闭，其他设备会立刻断开。\n' + statusText() }
       }
-      return { kind: 'error', text: '看不懂「' + arg + '」。用法：/lan（看状态）、/lan yes（开启）、/lan no（关闭）' }
+      if (arg.indexOf('port') === 0) {
+        const rest = arg.slice(4).trim()
+        if (rest === '') {
+          return {
+            kind: 'success',
+            text: '当前端口：' + effectivePort() + '（默认 ' + DEFAULT_PORT + '）\n改端口：/lan port 9000',
+          }
+        }
+        const parsed = validatePort(rest)
+        if (!parsed.ok) return { kind: 'error', text: parsed.error }
+        if (parsed.port === effectivePort()) return { kind: 'success', text: '端口本来就是 ' + parsed.port + '。' }
+        try {
+          setPort(parsed.port, 'command')
+        } catch (e) {
+          return { kind: 'error', text: '保存失败：' + e.message }
+        }
+        log('info', '命令行把监听端口改为 ' + parsed.port)
+        return { kind: 'success', text: '端口已改为 ' + parsed.port + '，正在重建监听（端口被占用的话会每 5 秒重试）。\n' + statusText() }
+      }
+      return { kind: 'error', text: '看不懂「' + arg + '」。用法：/lan（看状态）、/lan yes（开启）、/lan no（关闭）、/lan port 9000（改端口）' }
     },
   }))
   console.log('[reproxy-lan] /lan 命令已注册')
@@ -289,7 +370,7 @@ function applyProxy(ctx, config) {
     clearTimeout(rebindTimer)
     rebindTimer = setTimeout(() => {
       if (disposed) return
-      log('info', '局域网访问开关变化 → 监听地址改为 ' + effectiveListenHost())
+      log('info', '开关/端口变化 → 重新监听 ' + effectiveListenHost() + ':' + effectivePort())
       startHosts()
     }, 400)
   }
@@ -417,6 +498,8 @@ function applyProxy(ctx, config) {
   }
 
   const startHosts = () => {
+    // 端口可能在运行期被改过：每次重建监听都从状态文件取一次
+    cfg.listenPort = effectivePort()
     const host = cfg.listenHost = effectiveListenHost()
     start(host)
     // IPv6 用 ipv6Only，否则 Linux 双栈会把 0.0.0.0 占的端口算作冲突
