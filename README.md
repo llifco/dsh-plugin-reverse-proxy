@@ -145,16 +145,27 @@ reproxy-lan --help
 
 ## 安装
 
+**从 npm 装（最简单，已收录 awesome-dsh-plugin）**
+
+```bash
+dsh plugin --profile web add dsh-plugin-reverse-proxy
+```
+
+或在插件市场里搜 `reverse-proxy`，点「安装」。
+
+**从源码装**
+
 ```bash
 git clone https://github.com/llifco/dsh-plugin-reverse-proxy.git
 cd dsh-plugin-reverse-proxy
 dsh plugin --profile web add .
 ```
 
-或用 Release 里的包：
+或者用 Release / npm 上的 tarball（文件名带当前版本号）：
 
 ```bash
-dsh plugin --profile web add ./dsh-plugin-reverse-proxy-0.3.3.tgz
+dsh plugin --profile web add ./dsh-plugin-reverse-proxy-0.3.5.tgz
+# 或 npm 包：https://registry.npmjs.org/dsh-plugin-reverse-proxy/-/dsh-plugin-reverse-proxy-0.3.5.tgz
 ```
 
 装完重启一次宿主：
