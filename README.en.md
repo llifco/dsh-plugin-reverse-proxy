@@ -16,6 +16,7 @@
   <a href="#scope"><img src="https://img.shields.io/badge/dsh-0.2.2--rc.1~rc.3-blueviolet.svg" alt="dsh"></a>
   <a href="https://github.com/llifco/dsh-plugin-reverse-proxy/actions"><img src="https://img.shields.io/github/actions/workflow/status/llifco/dsh-plugin-reverse-proxy/publish.yml?label=publish" alt="publish"></a>
   <a href="https://github.com/llifco/dsh-plugin-reverse-proxy/stargazers"><img src="https://img.shields.io/github/stars/llifco/dsh-plugin-reverse-proxy" alt="stars"></a>
+  <a href="#community"><img src="https://img.shields.io/badge/QQ%20group-1065464637-12B7F5.svg" alt="QQ group"></a>
 </p>
 
 > One command and any device on your LAN — phone, tablet, another laptop — can open your DSH web UI,
@@ -28,6 +29,18 @@ Then open **Settings → LAN access**: it listens on loopback only by default, f
 confirm — your phone can connect.
 (You can also install from source: `github:llifco/dsh-plugin-reverse-proxy`, see [Install](#install).)
 
+
+---
+
+## What it looks like
+
+**Settings → LAN access** (off by default; flipping it asks for confirmation first):
+
+<p align="center">
+  <img src="assets/settings-lan-access.jpg" width="620" alt="Settings · LAN access">
+</p>
+
+No GUI around? The same switch works from a terminal (`yes` is required) — see [Usage](#usage).
 
 ---
 
@@ -273,3 +286,11 @@ routes events to the single live client rather than per tab. 0.4.x already gives
 identity (`x-dsh-tab` header plus `?tab=` on the mux — visible as `http tab ...` / `mux admit ...`
 in the log), but the gateway still accepts only one answering stream, so the plugin cannot work
 around it.
+
+---
+
+## Community
+
+Questions, ideas and war stories: **QQ group 1065464637**.
+
+For bugs, please open an [Issue](https://github.com/llifco/dsh-plugin-reverse-proxy/issues/new/choose) — the template asks for your DSH version, switch state and logs, which is far faster than guessing.

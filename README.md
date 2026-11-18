@@ -16,6 +16,7 @@
   <a href="#适用范围"><img src="https://img.shields.io/badge/dsh-0.2.2--rc.1~rc.3-blueviolet.svg" alt="dsh"></a>
   <a href="https://github.com/llifco/dsh-plugin-reverse-proxy/actions"><img src="https://img.shields.io/github/actions/workflow/status/llifco/dsh-plugin-reverse-proxy/publish.yml?label=publish" alt="publish"></a>
   <a href="https://github.com/llifco/dsh-plugin-reverse-proxy/stargazers"><img src="https://img.shields.io/github/stars/llifco/dsh-plugin-reverse-proxy" alt="stars"></a>
+  <a href="#%E4%BA%A4%E6%B5%81%E7%BE%A4"><img src="https://img.shields.io/badge/QQ%E7%BE%A4-1065464637-12B7F5.svg" alt="QQ 群"></a>
 </p>
 
 > 一条命令装上，局域网里的手机、平板、另一台电脑就能直接打开你的 DSH 网页界面，
@@ -27,6 +28,18 @@ dsh plugin --profile web add dsh-plugin-reverse-proxy   # 推荐：npm 包，免
 
 装完打开 **设置 → 局域网访问**：默认只监听本机，点开关 → 确认 → 手机就能进。
 （也可以 `github:llifco/dsh-plugin-reverse-proxy` 从源码装，见 [安装](#安装)。）
+
+---
+
+## 长什么样
+
+**设置 → 局域网访问**（默认关闭，点开关会先弹出一次安全确认）：
+
+<p align="center">
+  <img src="assets/settings-lan-access.jpg" width="620" alt="设置 · 局域网访问">
+</p>
+
+没开图形界面时，终端里也能开关（`yes` 才真的开）——见下面 [怎么用](#怎么用)。
 
 ---
 
@@ -305,3 +318,11 @@ nginx -t && systemctl reload nginx
 ## 许可
 
 MIT（`vendor/skip/` 内代码来自 @iasiv5/dsh-skip-browser-auth，同样 MIT）
+
+---
+
+## 交流群
+
+问题、想法、踩坑都欢迎来聊：**QQ 群 1065464637**。
+
+提 bug 的话，直接开 [Issue](https://github.com/llifco/dsh-plugin-reverse-proxy/issues/new/choose) 更好查——模板里会问 DSH 版本、开关状态和日志，比来回猜快得多。
