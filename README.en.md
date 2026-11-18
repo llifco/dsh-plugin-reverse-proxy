@@ -123,16 +123,27 @@ The desktop app runs locally and can hit `127.0.0.1:3080` directly — no proxy,
 
 ## Install
 
+**From npm (easiest; also listed in awesome-dsh-plugin)**
+
+```bash
+dsh plugin --profile web add dsh-plugin-reverse-proxy
+```
+
+or search `reverse-proxy` in the plugin marketplace and hit Install.
+
+**From source**
+
 ```bash
 git clone https://github.com/llifco/dsh-plugin-reverse-proxy.git
 cd dsh-plugin-reverse-proxy
 dsh plugin --profile web add .
 ```
 
-or install the tarball from the releases page:
+or use the tarball from the releases page / npm (filename carries the current version):
 
 ```bash
-dsh plugin --profile web add ./dsh-plugin-reverse-proxy-0.3.3.tgz
+dsh plugin --profile web add ./dsh-plugin-reverse-proxy-0.3.5.tgz
+# or: https://registry.npmjs.org/dsh-plugin-reverse-proxy/-/dsh-plugin-reverse-proxy-0.3.5.tgz
 ```
 
 Restart the host once:
