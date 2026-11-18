@@ -7,17 +7,26 @@
 <p align="center">简体中文 ｜ <a href="README.en.md">English</a></p>
 
 <p align="center">
-  <a href="#"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="license"></a>
-  <a href="#"><img src="https://img.shields.io/badge/dependencies-0-brightgreen.svg" alt="dependencies"></a>
-  <a href="#"><img src="https://img.shields.io/badge/build-none-brightgreen.svg" alt="build"></a>
-  <a href="#"><img src="https://img.shields.io/badge/dsh-0.2.2--rc.3-blueviolet.svg" alt="dsh"></a>
-  <a href="#"><img src="https://img.shields.io/badge/status-beta-orange.svg" alt="status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="license"></a>
+  <a href="https://www.npmjs.com/package/dsh-plugin-reverse-proxy"><img src="https://img.shields.io/npm/v/dsh-plugin-reverse-proxy?label=npm" alt="npm"></a>
+  <a href="https://www.npmjs.com/package/dsh-plugin-reverse-proxy"><img src="https://img.shields.io/npm/dm/dsh-plugin-reverse-proxy?label=downloads" alt="downloads"></a>
   <a href="https://github.com/llifco/dsh-plugin-reverse-proxy/releases/latest"><img src="https://img.shields.io/github/v/release/llifco/dsh-plugin-reverse-proxy?label=release" alt="release"></a>
+  <img src="https://img.shields.io/badge/dependencies-0-brightgreen.svg" alt="dependencies">
+  <img src="https://img.shields.io/badge/build-none-brightgreen.svg" alt="build">
+  <a href="#适用范围"><img src="https://img.shields.io/badge/dsh-0.2.2--rc.1~rc.3-blueviolet.svg" alt="dsh"></a>
+  <a href="https://github.com/llifco/dsh-plugin-reverse-proxy/actions"><img src="https://img.shields.io/github/actions/workflow/status/llifco/dsh-plugin-reverse-proxy/publish.yml?label=publish" alt="publish"></a>
   <a href="https://github.com/llifco/dsh-plugin-reverse-proxy/stargazers"><img src="https://img.shields.io/github/stars/llifco/dsh-plugin-reverse-proxy" alt="stars"></a>
 </p>
 
 > 一条命令装上，局域网里的手机、平板、另一台电脑就能直接打开你的 DSH 网页界面，
 > **而且不用再从启动日志里抄那串随机 token**。
+
+```bash
+dsh plugin --profile web add dsh-plugin-reverse-proxy   # 推荐：npm 包，免构建
+```
+
+装完打开 **设置 → 局域网访问**：默认只监听本机，点开关 → 确认 → 手机就能进。
+（也可以 `github:llifco/dsh-plugin-reverse-proxy` 从源码装，见 [安装](#安装)。）
 
 ---
 
@@ -164,8 +173,8 @@ dsh plugin --profile web add .
 或者用 Release / npm 上的 tarball（文件名带当前版本号）：
 
 ```bash
-dsh plugin --profile web add ./dsh-plugin-reverse-proxy-0.3.5.tgz
-# 或 npm 包：https://registry.npmjs.org/dsh-plugin-reverse-proxy/-/dsh-plugin-reverse-proxy-0.3.5.tgz
+dsh plugin --profile web add ./dsh-plugin-reverse-proxy-0.4.3.tgz
+# 或 npm 包：https://registry.npmjs.org/dsh-plugin-reverse-proxy/-/dsh-plugin-reverse-proxy-0.4.3.tgz
 ```
 
 装完重启一次宿主：

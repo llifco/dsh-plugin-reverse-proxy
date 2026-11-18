@@ -1,0 +1,50 @@
+name: Bug report / 问题反馈
+description: 装不上、打不开、开了开关还是连不上…… / install, access or connection problems
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        填得越细，定位越快。**多窗口/多标签的问题请先看 FAQ 里的「已知限制」**——
+        同一浏览器目前只能开一个标签页，这是 DSH 官方身份模型的限制，不是本插件能补的。
+  - type: input
+    id: dsh-version
+    attributes:
+      label: DSH 版本 / DSH version
+      description: 后台右下角或 `dsh --version`
+      placeholder: 0.2.2-rc.3
+    validations: { required: true }
+  - type: input
+    id: plugin-version
+    attributes:
+      label: 插件版本 / plugin version
+      description: 设置 → 插件，或 `dsh plugin --profile web list`
+      placeholder: 0.4.3
+    validations: { required: true }
+  - type: dropdown
+    id: lan
+    attributes:
+      label: 局域网访问开关 / LAN switch
+      options: ['已开启 / on', '已关闭 / off', '不确定 / not sure']
+    validations: { required: true }
+  - type: input
+    id: env
+    attributes:
+      label: 系统与浏览器 / OS and browser
+      placeholder: Armbian 26.11 / Windows 11 + Edge 154 / iOS Safari
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么 / what happened
+      description: 期望是什么、实际是什么、报什么错（有控制台截图更好）
+    validations: { required: true }
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相关日志 / logs
+      description: |
+        ```bash
+        journalctl -u dsh -n 100 --no-pager | grep -i reproxy
+        curl -s http://127.0.0.1:8080/reproxy-lan/status
+        ```
+      render: shell

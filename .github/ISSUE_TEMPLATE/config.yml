@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 用法问答 / Q&A
+    url: https://github.com/llifco/dsh-plugin-reverse-proxy/discussions
+    about: 不确定能不能用、怎么配，先去讨论区问，比开 issue 更合适。

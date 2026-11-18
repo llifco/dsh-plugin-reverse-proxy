@@ -7,17 +7,27 @@
 <p align="center"><a href="README.md">简体中文</a> ｜ English</p>
 
 <p align="center">
-  <a href="#"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="license"></a>
-  <a href="#"><img src="https://img.shields.io/badge/dependencies-0-brightgreen.svg" alt="dependencies"></a>
-  <a href="#"><img src="https://img.shields.io/badge/build-none-brightgreen.svg" alt="build"></a>
-  <a href="#"><img src="https://img.shields.io/badge/dsh-0.2.2--rc.3-blueviolet.svg" alt="dsh"></a>
-  <a href="#"><img src="https://img.shields.io/badge/status-beta-orange.svg" alt="status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="license"></a>
+  <a href="https://www.npmjs.com/package/dsh-plugin-reverse-proxy"><img src="https://img.shields.io/npm/v/dsh-plugin-reverse-proxy?label=npm" alt="npm"></a>
+  <a href="https://www.npmjs.com/package/dsh-plugin-reverse-proxy"><img src="https://img.shields.io/npm/dm/dsh-plugin-reverse-proxy?label=downloads" alt="downloads"></a>
   <a href="https://github.com/llifco/dsh-plugin-reverse-proxy/releases/latest"><img src="https://img.shields.io/github/v/release/llifco/dsh-plugin-reverse-proxy?label=release" alt="release"></a>
+  <img src="https://img.shields.io/badge/dependencies-0-brightgreen.svg" alt="dependencies">
+  <img src="https://img.shields.io/badge/build-none-brightgreen.svg" alt="build">
+  <a href="#scope"><img src="https://img.shields.io/badge/dsh-0.2.2--rc.1~rc.3-blueviolet.svg" alt="dsh"></a>
+  <a href="https://github.com/llifco/dsh-plugin-reverse-proxy/actions"><img src="https://img.shields.io/github/actions/workflow/status/llifco/dsh-plugin-reverse-proxy/publish.yml?label=publish" alt="publish"></a>
   <a href="https://github.com/llifco/dsh-plugin-reverse-proxy/stargazers"><img src="https://img.shields.io/github/stars/llifco/dsh-plugin-reverse-proxy" alt="stars"></a>
 </p>
 
 > One command and any device on your LAN — phone, tablet, another laptop — can open your DSH web UI,
 > **without copying the random token out of the startup log**.
+```bash
+dsh plugin --profile web add dsh-plugin-reverse-proxy   # recommended: npm package, no build
+```
+
+Then open **Settings → LAN access**: it listens on loopback only by default, flip the switch,
+confirm — your phone can connect.
+(You can also install from source: `github:llifco/dsh-plugin-reverse-proxy`, see [Install](#install).)
+
 
 ---
 
@@ -142,8 +152,8 @@ dsh plugin --profile web add .
 or use the tarball from the releases page / npm (filename carries the current version):
 
 ```bash
-dsh plugin --profile web add ./dsh-plugin-reverse-proxy-0.3.5.tgz
-# or: https://registry.npmjs.org/dsh-plugin-reverse-proxy/-/dsh-plugin-reverse-proxy-0.3.5.tgz
+dsh plugin --profile web add ./dsh-plugin-reverse-proxy-0.4.3.tgz
+# or: https://registry.npmjs.org/dsh-plugin-reverse-proxy/-/dsh-plugin-reverse-proxy-0.4.3.tgz
 ```
 
 Restart the host once:

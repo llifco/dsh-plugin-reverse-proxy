@@ -4,6 +4,19 @@
 
 ---
 
+## 0.4.3
+
+仅文档与仓库配置，代码同 0.4.2。
+
+**更新内容**
+- README 首屏加**一行安装命令**与「装完点哪儿」，徽章全部换成可点的真实链接（license / npm 版本 / 下载量 / release / CI / stars）。
+- About 描述补上「内网穿透替代」「免 Token 登录」等会被搜的词，homepage 指向 npm 包页。
+- 新增 `.github/workflows/publish.yml`：推 `v*` 标签自动发 npm，并校验标签与 `package.json` 版本一致。
+- 新增 Issue 模板（自动带 DSH 版本 / 插件版本 / 开关状态 / 系统浏览器）与讨论区入口。
+
+**修复内容**
+- README 里 tarball 示例仍写着 0.3.5 的文件名，改成 0.4.3。
+
 ## 0.4.2
 
 ### 文档 / 界面
