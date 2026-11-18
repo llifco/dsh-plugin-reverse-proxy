@@ -11,6 +11,84 @@ window.__ModuleLoader__.load({
 			},
 		});
 		const profile = globalThis["__DSH_SKIP_BROWSER_AUTH_PROFILE__"];
+		// ── 标签身份（0.3.8）────────────────────────────────────────────────────
+		// 同一浏览器的多个标签页共用一个 cookie，官方身份层因此把它们当成同一个
+		// Peer；而一份 Peer 只绑一条能回答 waterfall 的事件流，第二个标签的首屏
+		// 请求就等不到回答、一直转圈。这里给每个标签页发一个只属于它的 id
+		// （sessionStorage 不跨标签共享），请求带 x-dsh-tab、WebSocket 带 ?tab=，
+		// 宿主侧据此各给一份 Peer。挂不上或出错就静默放行，绝不阻断页面启动。
+		const installTabIdentity = () => {
+			const KEY = 'dsh-reproxy-tab'
+			const HEADER = 'x-dsh-tab'
+			const VALID = /^[A-Za-z0-9._-]{8,64}$/
+			// 只放在内存里，每个文档一份：sessionStorage 在「复制标签/从链接打开」时
+			// 会被浏览器整份复制给新标签，两个标签就会拿到同一个 id（实测同 id 前缀
+			// tab-mwm0…），等于没修。内存变量天然是「一次页面加载 = 一个身份」。
+			let id
+			try {
+				const raw = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+					? crypto.randomUUID()
+					: 'tab-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10)
+				id = raw.replace(/[^A-Za-z0-9._-]/g, '').slice(0, 64)
+			}
+			catch {
+				return
+			}
+			if (!id || !VALID.test(id)) return
+			const origin = typeof location === 'undefined' ? undefined : location.origin
+			const originalFetch = globalThis.fetch
+			if (typeof originalFetch === 'function' && originalFetch.__reproxyTab !== true) {
+				const fetchWithTab = function (input, init) {
+					try {
+						const raw = typeof input === 'string' ? input : (input instanceof Request ? input.url : String(input))
+						const abs = new URL(raw, origin ?? 'http://dsh.invalid')
+						if (origin === undefined || abs.origin === origin) {
+							const headers = new Headers(init && init.headers !== undefined ? init.headers : (input instanceof Request ? input.headers : undefined))
+							headers.set(HEADER, id)
+							const target = input instanceof Request ? new Request(input, { headers }) : input
+							return originalFetch.call(this, target, Object.assign({}, init, { headers }))
+						}
+					}
+					catch {
+						// 任何形态异常都退回原样调用
+					}
+					return originalFetch.apply(this, arguments)
+				}
+				fetchWithTab.__reproxyTab = true
+				globalThis.fetch = fetchWithTab
+			}
+			const OriginalSocket = globalThis.WebSocket
+			if (typeof OriginalSocket === 'function' && OriginalSocket.__reproxyTab !== true) {
+				const socketWithTab = function (url, protocols) {
+					let target = url
+					try {
+						const abs = new URL(String(url), origin ?? 'http://dsh.invalid')
+						abs.searchParams.set('tab', id)
+						target = abs.href
+					}
+					catch {
+						// 解析失败就用原 URL
+					}
+					return protocols === undefined ? new OriginalSocket(target) : new OriginalSocket(target, protocols)
+				}
+				socketWithTab.__reproxyTab = true
+				socketWithTab.prototype = OriginalSocket.prototype
+				try {
+					Object.setPrototypeOf(socketWithTab, OriginalSocket)
+				}
+				catch {
+					// 静态常量挂在原构造器上，拷不过来也不影响实例
+				}
+				globalThis.WebSocket = socketWithTab
+			}
+			console.log('[reproxy-lan] tab identity =', id.slice(0, 8))
+		};
+		try {
+			installTabIdentity();
+		}
+		catch (error) {
+			console.warn('[reproxy-lan] tab identity failed', error);
+		}
 		const LAN_WARNING_TITLE = '对局域网开放访问？';
 		const LAN_WARNING_LINES = [
 			'开启后，同一网络里的任何设备打开这台机器的 8080 端口，都能直接进入 DSH 后台，',
@@ -38,6 +116,8 @@ window.__ModuleLoader__.load({
 			'.reproxy-lan-ok{font-size:12px;color:#5ee08a}',
 			'.reproxy-lan-switch[disabled]{opacity:.55;cursor:default}',
 			'.reproxy-lan-meta{font-size:12px;color:var(--dsw-alias-label-secondary,#9aa0ad);line-height:1.7}',
+			'.reproxy-lan-note{margin-top:10px;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.75;color:var(--dsw-alias-label-secondary,#9aa0ad);background:rgba(255,255,255,.04);border:1px solid var(--dsw-alias-border-l1,#333947)}',
+			'.reproxy-lan-note b{color:var(--dsw-alias-label-primary,#e8ebf2);font-weight:600}',
 			'.reproxy-lan-err{font-size:12px;color:#ff6b6b}',
 			'.reproxy-lan-mask{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:9999}',
 			'.reproxy-lan-card{width:min(460px,92vw);background:var(--dsw-alias-bg-layer-1,#1c1f26);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:20px;box-shadow:0 18px 48px rgba(0,0,0,.45)}',
@@ -157,6 +237,13 @@ window.__ModuleLoader__.load({
 					portMsg ? h('div', { className: portBad ? 'reproxy-lan-err' : 'reproxy-lan-ok' }, portMsg) : null,
 					h('div', { className: 'reproxy-lan-meta' }, status),
 					state && state.updatedAt ? h('div', { className: 'reproxy-lan-meta' }, '上次修改：' + state.updatedAt + '（' + (state.updatedBy || 'unknown') + '）') : null,
+					h('div', { className: 'reproxy-lan-note' },
+						h('b', null, '多窗口限制：'),
+						'同一浏览器暂时只能开一个窗口访问——第二块窗口会卡在加载、聊天记录出不来，',
+						'关掉其他窗口或断网重连才会恢复。这是 DSH 官方的身份模型（一个浏览器 = 一份连接，',
+						'只接一条能回答的事件流），插件层绕不过去，要等官方放开；',
+						'手机和电脑各开一个、或其中一个用无痕窗口，都不受影响。'
+					),
 					error ? h('div', { className: 'reproxy-lan-err' }, error) : null,
 					asking ? h('div', { className: 'reproxy-lan-mask' },
 						h('div', { className: 'reproxy-lan-card' },

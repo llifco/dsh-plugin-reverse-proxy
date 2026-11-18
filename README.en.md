@@ -233,6 +233,14 @@ No, and it should not. It only makes LAN access work; add your own tunnel plus a
 **Does the desktop app use it?**
 No — connect to `127.0.0.1:3080` directly.
 
+**Q: Opening a second window on the same device shows a blank page and no chat history?**
+
+Fixed in 0.3.6. Without an identity layer every browser request shares one
+`browserPeer`, and a Peer serves only the stream bound to it — the second
+window's stream competed for the same endpoints and waited forever until every
+window was closed. Each mux connection now mints its own Peer. Look for
+`[reproxy-lan] per-socket peers enabled (multi-window)` in the log to confirm.
+
 ---
 
 ## Feedback
@@ -243,3 +251,15 @@ No — connect to `127.0.0.1:3080` directly.
 ## License
 
 MIT (`vendor/skip/` code comes from @iasiv5/dsh-skip-browser-auth, also MIT).
+
+**Q: A second tab on the same device stays on a spinner?**
+
+**Known limitation: multiple tabs of the same browser are not supported yet.** The second tab
+spins forever and shows an empty session list; closing the other tabs (or a network reconnect)
+recovers it. One tab per device, or one of them in a private window, works fine.
+
+Cause is upstream: one browser cookie = one Peer = one answering event stream, and the gateway
+routes events to the single live client rather than per tab. 0.4.x already gives each tab its own
+identity (`x-dsh-tab` header plus `?tab=` on the mux — visible as `http tab ...` / `mux admit ...`
+in the log), but the gateway still accepts only one answering stream, so the plugin cannot work
+around it.

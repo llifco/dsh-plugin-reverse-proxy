@@ -1,4 +1,5 @@
 import { bridgeWithPeer } from '../bridge.js';
+import { installPerSocketPeers } from '../multi-peer.js';
 /**
  * Host implementation for the 0.2.1 carrier-neutral connection contract.
  *
@@ -38,6 +39,12 @@ export function createCarrierNeutral021Runtime(input) {
     }
     if (typeof fetchHandler.requestBodyMode !== 'function') {
         throw new Error('dsh-plugin-reverse-proxy: carrier-neutral-021 profile requires a requestBodyMode-aware connection handler');
+    }
+    // 多窗口：trusted 模式没有身份层，所有浏览器请求共享 browserPeer；给每条
+    // mux 连接现铸一份 Peer，否则第二个窗口会和第一个抢同一份流端点（见
+    // vendor/skip/multi-peer.js 顶部说明）。
+    if (installPerSocketPeers(connection)) {
+        console.log('[reproxy-lan] per-socket peers enabled (multi-window)');
     }
     const waterfall = input.ctx.waterfall;
     if (typeof waterfall !== 'function') {
