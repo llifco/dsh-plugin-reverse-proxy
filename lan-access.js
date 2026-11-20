@@ -1,5 +1,5 @@
 /**
- * 局域网访问开关（0.3.2）。
+ * 局域网访问开关（0.3.2）+ 自定义端口（0.3.5）+ 访问 IP / 黑名单（0.5.0）。
  *
  * 默认关闭：反代只监听 127.0.0.1，同一台机器上的浏览器才能打开。
  * 用户必须在设置页点开关（弹安全提示、点「确定」）或者在命令行里确认，
@@ -9,6 +9,7 @@
  * 开关切换后马上写盘，重启 dsh 不需要重新打开。
  */
 import fs from 'node:fs'
+import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -22,6 +23,9 @@ export const STATE_FILE = path.join(DSH_HOME, 'plugin-reverse-proxy', 'lan-acces
 
 /** 默认监听端口：0.3.5 起端口也进状态文件，可在设置页改，重启保留。 */
 export const DEFAULT_PORT = 8080
+
+/** 黑名单最多记这么多条，防止状态文件无限长。 */
+export const MAX_BLOCKED = 200
 
 /** 安全提示文案：设置页弹窗与命令行共用同一份，避免两处说法不一致。 */
 export const LAN_WARNING_TITLE = '对局域网开放访问？'
@@ -49,6 +53,47 @@ export const validatePort = (value) => {
   return { ok: true, port: n }
 }
 
+/**
+ * 归一化 IP：双栈 socket 会给 `::ffff:192.168.1.7`，去掉前缀才好比较、好显示。
+ * 非法字符串返回空串（调用方据此跳过）。
+ */
+export const normalizeIp = (value) => {
+  if (typeof value !== 'string') return ''
+  let ip = value.trim()
+  if (ip === '') return ''
+  const mapped = ip.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i)
+  if (mapped) ip = mapped[1]
+  const zone = ip.indexOf('%')
+  if (zone !== -1) ip = ip.slice(0, zone)
+  if (net.isIP(ip) === 0) return ''
+  return ip
+}
+
+/** 回环地址不允许进黑名单：封了它等于把自己锁在门外。 */
+const isLoopback = (ip) => ip === '::1' || /^127\./.test(ip)
+
+const DEFAULT_STATE = {
+  lanAccess: false,
+  port: DEFAULT_PORT,
+  blacklistEnabled: false,
+  blockedIps: [],
+  updatedAt: null,
+  updatedBy: null,
+}
+
+const sanitizeBlocked = (value) => {
+  if (!Array.isArray(value)) return []
+  const out = []
+  for (const item of value) {
+    const ip = normalizeIp(item)
+    if (ip === '' || isLoopback(ip)) continue
+    if (out.includes(ip)) continue
+    out.push(ip)
+    if (out.length >= MAX_BLOCKED) break
+  }
+  return out
+}
+
 const readState = () => {
   try {
     const raw = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'))
@@ -56,12 +101,14 @@ const readState = () => {
     return {
       lanAccess: raw?.lanAccess === true,
       port: parsed.ok ? parsed.port : DEFAULT_PORT,
+      blacklistEnabled: raw?.blacklistEnabled === true,
+      blockedIps: sanitizeBlocked(raw?.blockedIps),
       updatedAt: typeof raw?.updatedAt === 'string' ? raw.updatedAt : null,
       updatedBy: typeof raw?.updatedBy === 'string' ? raw.updatedBy : null,
     }
   } catch {
     // 文件不存在 / 读坏了都当「关闭」——安全默认值
-    return { lanAccess: false, port: DEFAULT_PORT, updatedAt: null, updatedBy: null }
+    return { ...DEFAULT_STATE, blockedIps: [] }
   }
 }
 
@@ -80,7 +127,28 @@ const writeState = (next) => {
   }
 }
 
-export const getLanState = () => ({ ...state })
+const notify = () => {
+  for (const listener of listeners) {
+    try { listener(getLanState()) } catch { /* 单个监听者失败不连坐 */ }
+  }
+}
+
+/** 所有写操作走这里：保留未提到的字段、补时间戳、落盘、广播。 */
+const commit = (patch, by) => {
+  const next = {
+    ...state,
+    ...patch,
+    updatedAt: new Date().toISOString(),
+    updatedBy: by,
+  }
+  next.blockedIps = sanitizeBlocked(next.blockedIps)
+  writeState(next)
+  state = next
+  notify()
+  return getLanState()
+}
+
+export const getLanState = () => ({ ...state, blockedIps: [...state.blockedIps] })
 
 /** 默认监听地址：没开就是本机回环。 */
 export const effectiveListenHost = () => (state.lanAccess ? '0.0.0.0' : '127.0.0.1')
@@ -94,61 +162,83 @@ export const onLanChange = (listener) => {
   return () => { listeners.delete(listener) }
 }
 
-/** 改开关：写盘 → 通知监听者。`by` 只用于记录是谁动的（settings / command）。 */
-export const setLanAccess = (enabled, by = 'unknown') => {
-  const next = {
-    lanAccess: enabled === true,
-    port: effectivePort(),
-    updatedAt: new Date().toISOString(),
-    updatedBy: by,
-  }
-  writeState(next)
-  state = next
-  for (const listener of listeners) {
-    try { listener(getLanState()) } catch { /* 单个监听者失败不连坐 */ }
-  }
-  return getLanState()
-}
+/** 改开关：写盘 → 通知监听者。`by` 只用于记录是谁动的（settings / command / cli）。 */
+export const setLanAccess = (enabled, by = 'unknown') => commit({ lanAccess: enabled === true }, by)
 
 /** 改端口：校验 → 写盘 → 通知监听者（调用方负责确认端口没被占用）。 */
 export const setPort = (value, by = 'unknown') => {
   const parsed = validatePort(value)
   if (!parsed.ok) throw new Error(parsed.error)
-  const next = {
-    lanAccess: state.lanAccess === true,
-    port: parsed.port,
-    updatedAt: new Date().toISOString(),
-    updatedBy: by,
-  }
-  writeState(next)
-  state = next
-  for (const listener of listeners) {
-    try { listener(getLanState()) } catch { /* 单个监听者失败不连坐 */ }
-  }
-  return getLanState()
+  return commit({ port: parsed.port }, by)
 }
 
-/** 给 UI / 命令用的统一状态描述。 */
+/** 黑名单总开关。关掉时不拦任何人，但名单保留，下次打开继续生效。 */
+export const setBlacklistEnabled = (enabled, by = 'unknown') => commit({ blacklistEnabled: enabled === true }, by)
+
 /**
- * 盯住状态文件：命令行脚本 / 手动改 json 也能触发重建监听。
- * 目录不存在时先建出来，否则 fs.watch 会直接抛。
+ * 拉黑一个 IP。
+ * 返回 `{ ok, added, state }`：`added:false` 表示本来就在名单里（同一个 IP 不需要重复添加）。
  */
+export const blockIp = (value, by = 'unknown') => {
+  const ip = normalizeIp(value)
+  if (ip === '') throw new Error('IP 地址不合法：' + String(value))
+  if (isLoopback(ip)) throw new Error('不能封禁本机回环地址（会把设置页自己也锁在外面）')
+  if (state.blockedIps.includes(ip)) return { ok: true, added: false, ip, state: getLanState() }
+  const next = commit({ blockedIps: [...state.blockedIps, ip] }, by)
+  return { ok: true, added: true, ip, state: next }
+}
+
+/** 解除拉黑。返回 `{ ok, removed, ip, state }`。 */
+export const unblockIp = (value, by = 'unknown') => {
+  const ip = normalizeIp(value)
+  if (ip === '') throw new Error('IP 地址不合法：' + String(value))
+  const index = state.blockedIps.indexOf(ip)
+  if (index === -1) return { ok: true, removed: false, ip, state: getLanState() }
+  const rest = state.blockedIps.filter((item) => item !== ip)
+  const next = commit({ blockedIps: rest }, by)
+  return { ok: true, removed: true, ip, state: next }
+}
+
+/** 当前是否拦这个 IP：黑名单没开就一律放行。 */
+export const isBlocked = (value) => {
+  if (state.blacklistEnabled !== true) return false
+  const ip = normalizeIp(value)
+  if (ip === '') return false
+  return state.blockedIps.includes(ip)
+}
+
+/**
+ * 一键恢复默认：局域网访问关闭、端口 8080、黑名单关闭且清空。
+ * 存在的意义是「误操作后的安全阀」——比如把自己或整个网段搞进黑名单、端口填成了别人占着的。
+ * 注意：关掉局域网访问后，正从 8080 访问的设备会立刻断开，所以命令入口都要求二次确认。
+ */
+export const resetConfig = (by = 'unknown') => commit({
+  lanAccess: false,
+  port: DEFAULT_PORT,
+  blacklistEnabled: false,
+  blockedIps: [],
+}, by)
+
+/** 盯住状态文件：命令行脚本 / 手动改 json 也能触发重建监听。 */
 const startWatch = () => {
   try {
     fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true })
     fs.watch(path.dirname(STATE_FILE), { persistent: false }, (_event, filename) => {
       if (filename && filename !== path.basename(STATE_FILE)) return
       const next = readState()
-      if (next.lanAccess === state.lanAccess && next.port === state.port) return
+      const same = next.lanAccess === state.lanAccess
+        && next.port === state.port
+        && next.blacklistEnabled === state.blacklistEnabled
+        && next.blockedIps.join(',') === state.blockedIps.join(',')
+      if (same) return
       state = next
-      for (const listener of listeners) {
-        try { listener(getLanState()) } catch { /* 单个监听者失败不连坐 */ }
-      }
+      notify()
     })
   } catch { /* 盯不住就算了，开关本身还能用 */ }
 }
 startWatch()
 
+/** 给 UI / 命令用的统一状态描述。 */
 export const describeLanState = (port) => {
   const current = getLanState()
   return {
@@ -159,6 +249,9 @@ export const describeLanState = (port) => {
     listenHost: effectiveListenHost(),
     port: typeof port === 'number' ? port : effectivePort(),
     defaultPort: DEFAULT_PORT,
+    blacklistEnabled: current.blacklistEnabled,
+    blockedIps: current.blockedIps,
+    blockedCount: current.blockedIps.length,
     stateFile: STATE_FILE,
   }
 }

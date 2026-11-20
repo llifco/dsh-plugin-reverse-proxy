@@ -42,9 +42,20 @@ confirm — your phone can connect.
 
 No GUI around? The same switch works from a terminal (`yes` is required) — see [Usage](#usage).
 
+
+
+**Access IPs and blacklist** (0.5.0+) — hit "Add" to blacklist a device; it then only sees a 403 page:
+
+<p align="center">
+  <img src="assets/access-ip.jpg" width="620" alt="Settings · access IPs and blacklist">
+</p>
+
+<p align="center">
+  <img src="assets/blocked-403.jpg" width="320" alt="403 page shown to a blacklisted device">
+</p>
 ---
 
-## Three capabilities
+## Four capabilities
 
 > Since 0.3.5: the settings switch is purple, and the **listening port** is editable
 > (default 8080, applied on save, kept across restarts).
@@ -117,7 +128,24 @@ edits to that file are picked up within a second (`fs.watch`).
 
 ---
 
-### 3. Token-free login (version-gated)
+### 3. Access IPs and blacklist (off by default)
+
+- Lists every device that recently hit the port (IP, last seen, request count).
+- **Add** drops that IP into the blacklist; the device then gets a 403 page until you remove it.
+- A **blacklist switch** sits right below the list ("no need, do not enable") — turning it off stops blocking but keeps the list.
+- Adding the same IP twice is a no-op (`added:false`); loopback and the device you are currently using cannot be blocked (HTTP 400), so you cannot lock yourself out.
+- The list is stored in the same state file (`blacklistEnabled`, `blockedIps`) and survives restarts.
+
+**Reset (safety valve for misconfiguration):**
+
+```bash
+reproxy-lan reset      # shows what will be restored, then asks you to type yes
+```
+
+Or `/lan reset` in chat, confirmed with `/lan reset yes`. Reset turns LAN access off, port back to 8080,
+blacklist off and clears the list — devices currently connected over 8080 drop immediately, by design.
+
+### 4. Token-free login (version-gated)
 
 Replaces the official `@deepseek-ai/dsh-client-connection` provider and skips BrowserAuth.
 

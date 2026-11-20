@@ -21,16 +21,22 @@ import net from 'node:net'
 import zlib from 'node:zlib'
 import { apply as applyTrustedConnection } from './vendor/skip/host.js'
 import {
+  blockIp,
   DEFAULT_PORT,
   describeLanState,
   effectiveListenHost,
   effectivePort,
   getLanState,
   LAN_WARNING_TEXT,
+  isBlocked,
+  normalizeIp,
+  resetConfig,
   onLanChange,
+  setBlacklistEnabled,
   setLanAccess,
   setPort,
   STATE_FILE,
+  unblockIp,
   validatePort,
 } from './lan-access.js'
 
@@ -119,7 +125,7 @@ function isImmutableAsset(url) {
  * 局域网开关的两个入口（设置页走 HTTP，命令行走 /lan 斜杠命令）。
  * 两边都改同一份 lan-access 状态文件，所以永远同步；改完立刻重建监听。
  */
-function registerLanControl(ctx, cfg, log) {
+function registerLanControl(ctx, cfg, log, extra = {}) {
   const sendJson = (res, status, body) => {
     const raw = JSON.stringify(body)
     try {
@@ -252,11 +258,118 @@ function registerLanControl(ctx, cfg, log) {
     },
   }
 
+  const listClients = typeof extra.listClients === 'function' ? extra.listClients : () => []
+  const withClients = (body) => ({ ...body, clients: listClients() })
+
+  const routeClients = {
+    kind: 'exact',
+    path: '/reproxy-lan/clients',
+    handler: (req, res) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        sendJson(res, 405, { ok: false, error: '只支持 GET' })
+        return
+      }
+      sendJson(res, 200, withClients(describeLanState()))
+    },
+  }
+
+  /** 黑名单总开关：关掉只是不拦，名单留着。 */
+  const routeBlacklist = {
+    kind: 'exact',
+    path: '/reproxy-lan/blacklist',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { ok: false, error: '只支持 POST' })
+        return
+      }
+      let body
+      try {
+        body = await readBody(req)
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+        return
+      }
+      if (typeof body.enabled !== 'boolean') {
+        sendJson(res, 400, { ok: false, error: 'enabled 必须是布尔值' })
+        return
+      }
+      try {
+        setBlacklistEnabled(body.enabled, 'settings')
+        log(body.enabled ? 'warn' : 'info', '设置页把黑名单' + (body.enabled ? '打开' : '关掉'))
+        sendJson(res, 200, withClients(describeLanState()))
+      } catch (e) {
+        sendJson(res, 500, { ok: false, error: e.message })
+      }
+    },
+  }
+
+  /** 拉黑：同一个 IP 重复点不会重复写（added:false）。 */
+  const routeBlock = {
+    kind: 'exact',
+    path: '/reproxy-lan/block',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { ok: false, error: '只支持 POST' })
+        return
+      }
+      let body
+      try {
+        body = await readBody(req)
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+        return
+      }
+      // 别把自己锁在门外：当前请求来自哪个 IP，就不许封哪个
+      const selfIp = normalizeIp(req.socket ? req.socket.remoteAddress : '')
+      const targetIp = normalizeIp(body.ip)
+      if (selfIp !== '' && targetIp === selfIp) {
+        sendJson(res, 400, { ok: false, error: '不能封禁当前正在使用的这台设备，换一台设备来操作' })
+        return
+      }
+      try {
+        const result = blockIp(body.ip, 'settings')
+        if (result.added) log('warn', '设置页拉黑 IP：' + result.ip)
+        sendJson(res, 200, withClients({ ...describeLanState(), added: result.added, ip: result.ip }))
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+      }
+    },
+  }
+
+  const routeUnblock = {
+    kind: 'exact',
+    path: '/reproxy-lan/unblock',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { ok: false, error: '只支持 POST' })
+        return
+      }
+      let body
+      try {
+        body = await readBody(req)
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+        return
+      }
+      try {
+        const result = unblockIp(body.ip, 'settings')
+        if (result.removed) log('info', '设置页解除拉黑：' + result.ip)
+        sendJson(res, 200, withClients({ ...describeLanState(), removed: result.removed, ip: result.ip }))
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+      }
+    },
+  }
+
   const webServer = ctx && typeof ctx.get === 'function' ? ctx.get('webServer') : null
   if (webServer && typeof webServer.register === 'function' && typeof ctx.effect === 'function') {
     ctx.effect(() => webServer.register(routeStatus))
     ctx.effect(() => webServer.register(routeSet))
     ctx.effect(() => webServer.register(routePort))
+    ctx.effect(() => webServer.register(routeClients))
+    ctx.effect(() => webServer.register(routeBlacklist))
+    ctx.effect(() => webServer.register(routeBlock))
+    ctx.effect(() => webServer.register(routeUnblock))
   } else {
     log('warn', 'webServer 不可用，设置页开关接口未注册')
   }
@@ -312,6 +425,29 @@ function registerLanControl(ctx, cfg, log) {
         log('info', '命令行切换局域网访问 → 关闭')
         return { kind: 'success', text: '已关闭，其他设备会立刻断开。\n' + statusText() }
       }
+      if (arg === 'reset') {
+        return {
+          kind: 'success',
+          text: [
+            '重置会把配置恢复到默认值：局域网访问关闭、端口 8080、黑名单关闭并清空名单。',
+            '注意：关掉局域网访问后，正从 8080 访问的设备会立刻断开，只有本机能打开后台。',
+            '确认要重置，请输入：/lan reset yes',
+          ].join('\n'),
+        }
+      }
+      if (arg === 'reset yes' || arg === 'reset y') {
+        const before = statusText()
+        try {
+          resetConfig('command')
+        } catch (e) {
+          return { kind: 'error', text: '重置失败：' + e.message }
+        }
+        log('warn', '命令行重置配置 → 默认值')
+        return {
+          kind: 'success',
+          text: '已重置为默认配置。\n重置前：\n' + before + '\n重置后：\n' + statusText(),
+        }
+      }
       if (arg.indexOf('port') === 0) {
         const rest = arg.slice(4).trim()
         if (rest === '') {
@@ -351,6 +487,62 @@ function applyProxy(ctx, config) {
   let retryTimer = null
   let disposed = false
 
+  /**
+   * 访问过本反代的设备（只留内存，重启清空）：ip → { ip, firstSeen, lastSeen, hits }。
+   * 设置页把这份列表显示出来，点「添加」就把那条 IP 丢进黑名单。
+   */
+  const seenClients = new Map()
+  const MAX_SEEN = 50
+
+  const noteClient = (req) => {
+    const ip = normalizeIp(req && req.socket ? req.socket.remoteAddress : '')
+    if (ip === '') return ''
+    const now = Date.now()
+    const prev = seenClients.get(ip)
+    if (prev) {
+      prev.lastSeen = now
+      prev.hits += 1
+    } else {
+      seenClients.set(ip, { ip, firstSeen: now, lastSeen: now, hits: 1 })
+      if (seenClients.size > MAX_SEEN) {
+        let oldestKey = ''
+        let oldest = Infinity
+        for (const [key, value] of seenClients) {
+          if (value.lastSeen < oldest) { oldest = value.lastSeen; oldestKey = key }
+        }
+        if (oldestKey !== '') seenClients.delete(oldestKey)
+      }
+    }
+    return ip
+  }
+
+  /** 给设置页看的快照（带 blocked 标记，前端据此决定按钮是「添加」还是「已在黑名单」）。 */
+  const listClients = () => [...seenClients.values()]
+    .sort((a, b) => b.lastSeen - a.lastSeen)
+    .map((entry) => ({ ...entry, blocked: isBlocked(entry.ip) }))
+
+  const BLOCKED_HTML = '<!doctype html><html lang="zh-CN"><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    + '<title>403 · 已被拉黑</title>'
+    + '<body style="margin:0;font:15px/1.8 -apple-system,system-ui,sans-serif;background:#12141a;color:#e6e8ee;padding:56px 24px">'
+    + '<h2 style="margin:0 0 12px;font-size:20px">403 · 这台设备已被拉黑</h2>'
+    + '<p style="margin:0;color:#9aa0ad;max-width:560px">'
+    + '管理员在 DSH 设置里把当前 IP 加进了黑名单，所以这台设备无法访问后台。'
+    + '如果认为这是误会，请联系管理员在「设置 → 局域网访问 → 访问 IP」里移除。'
+    + '</p></body></html>'
+
+  const sendBlocked = (res) => {
+    try {
+      const body = Buffer.from(BLOCKED_HTML, 'utf8')
+      res.writeHead(403, {
+        'content-type': 'text/html; charset=utf-8',
+        'content-length': body.length,
+        'cache-control': 'no-store',
+      })
+      res.end(body)
+    } catch { /* 连接已断 */ }
+  }
+
   /** 关掉现有监听（换地址前必须先让出端口）。 */
   const stopListening = () => {
     clearTimeout(retryTimer)
@@ -376,6 +568,11 @@ function applyProxy(ctx, config) {
   }
 
   const onRequest = (req, res) => {
+    const clientIp = noteClient(req)
+    if (clientIp !== '' && isBlocked(clientIp)) {
+      sendBlocked(res)
+      return
+    }
     let received = 0
     let aborted = false
     const upstream = http.request({
@@ -436,6 +633,11 @@ function applyProxy(ctx, config) {
   }
 
   const onUpgrade = (req, clientSocket, head) => {
+    const upgradeIp = noteClient(req)
+    if (upgradeIp !== '' && isBlocked(upgradeIp)) {
+      try { clientSocket.end('HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\nconnection: close\r\n\r\n') } catch { /* 已关 */ }
+      return
+    }
     const upstream = net.connect(cfg.upstreamPort, cfg.upstreamHost, () => {
       const headers = upstreamHeaders(req, cfg, {
         connection: 'Upgrade',
@@ -524,7 +726,7 @@ function applyProxy(ctx, config) {
   } catch { /* 订阅失败不连坐 */ }
 
   try {
-    registerLanControl(ctx, cfg, log)
+    registerLanControl(ctx, cfg, log, { listClients })
   } catch (e) {
     log('error', '局域网开关接口注册失败: ' + (e && e.message))
   }

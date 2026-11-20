@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-reverse-proxy",
-  "version": "0.4.4",
+  "version": "0.5.0",
   "description": "DSH 网页界面局域网访问插件：内置反向代理 + 免 Token 登录，手机/平板同 Wi-Fi 直接打开后台。默认只监听本机，需显式开启，端口可自定义。",
   "type": "module",
   "main": "index.js",
@@ -19,7 +19,8 @@
     "assets",
     "vendor",
     "LICENSE",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "screenshots.json"
   ],
   "engines": {
     "node": ">=22"

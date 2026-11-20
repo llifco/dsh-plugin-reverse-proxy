@@ -119,6 +119,15 @@ window.__ModuleLoader__.load({
 			'.reproxy-lan-note{margin-top:10px;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.75;color:var(--dsw-alias-label-secondary,#9aa0ad);background:rgba(255,255,255,.04);border:1px solid var(--dsw-alias-border-l1,#333947)}',
 			'.reproxy-lan-note b{color:var(--dsw-alias-label-primary,#e8ebf2);font-weight:600}',
 			'.reproxy-lan-err{font-size:12px;color:#ff6b6b}',
+			'.reproxy-lan-list{margin-top:10px;display:flex;flex-direction:column;gap:6px}',
+			'.reproxy-lan-ip{display:flex;align-items:center;gap:10px;font-size:13px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-primary,#e6e8ee)}',
+			'.reproxy-lan-add{border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer;border:1px solid rgba(139,92,246,.7);background:transparent;color:#c4b5fd}',
+			'.reproxy-lan-add:hover{background:rgba(139,92,246,.16)}',
+			'.reproxy-lan-add[disabled]{opacity:.5;cursor:default}',
+			'.reproxy-lan-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}',
+			'.reproxy-lan-chip{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-variant-numeric:tabular-nums;padding:3px 10px;border-radius:999px;background:rgba(255,107,107,.12);border:1px solid rgba(255,107,107,.35);color:#ffb3b3}',
+			'.reproxy-lan-chip button{border:none;background:transparent;color:#ff8f8f;cursor:pointer;font-size:12px;padding:0}',
+			'.reproxy-lan-chip button[disabled]{opacity:.5;cursor:default}',
 			'.reproxy-lan-mask{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:9999}',
 			'.reproxy-lan-card{width:min(460px,92vw);background:var(--dsw-alias-bg-layer-1,#1c1f26);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:20px;box-shadow:0 18px 48px rgba(0,0,0,.45)}',
 			'.reproxy-lan-card h3{margin:0 0 10px;font-size:15px;color:var(--dsw-alias-label-primary,#e6e8ee)}',
@@ -143,6 +152,17 @@ window.__ModuleLoader__.load({
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ port })
 			}).then((r) => r.json());
+			const readClients = () => fetch('/reproxy-lan/clients', { headers: { accept: 'application/json' }, cache: 'no-store' }).then((r) => r.json());
+			const postIp = (path, ip) => fetch(path, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ ip })
+			}).then((r) => r.json());
+			const writeBlacklist = (enabled) => fetch('/reproxy-lan/blacklist', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ enabled })
+			}).then((r) => r.json());
 			function Panel() {
 				const [state, setState] = React.useState(null);
 				const [asking, setAsking] = React.useState(false);
@@ -152,6 +172,11 @@ window.__ModuleLoader__.load({
 				const [portBusy, setPortBusy] = React.useState(false);
 				const [portMsg, setPortMsg] = React.useState('');
 				const [portBad, setPortBad] = React.useState(false);
+				const [clients, setClients] = React.useState([]);
+				const [blacklistOn, setBlacklistOn] = React.useState(false);
+				const [ipBusy, setIpBusy] = React.useState('');
+				const [ipMsg, setIpMsg] = React.useState('');
+				const [ipBad, setIpBad] = React.useState(false);
 				React.useEffect(() => {
 					let alive = true;
 					readState().then((body) => {
@@ -160,6 +185,18 @@ window.__ModuleLoader__.load({
 						setPortDraft(body && body.port ? String(body.port) : '');
 					}).catch((e) => { if (alive) setError(String((e && e.message) || e)); });
 					return () => { alive = false; };
+				}, []);
+				// 访问 IP 列表：进面板先拉一次，之后每 5 秒轻量刷新（只读，不写盘）
+				React.useEffect(() => {
+					let alive = true;
+					const load = () => readClients().then((body) => {
+						if (!alive || !body || body.ok !== true) return;
+						setClients(Array.isArray(body.clients) ? body.clients : []);
+						setBlacklistOn(body.blacklistEnabled === true);
+					}).catch(() => { /* 拉不到就保持上一份 */ });
+					load();
+					const timer = setInterval(load, 5000);
+					return () => { alive = false; clearInterval(timer); };
 				}, []);
 				const apply = (enabled) => {
 					setBusy(true);
@@ -188,8 +225,45 @@ window.__ModuleLoader__.load({
 						setPortMsg('已保存，正在切到 ' + body.port + ' 端口');
 					}).catch((e) => fail(String((e && e.message) || e))).then(() => setPortBusy(false));
 				};
+				const applyBlock = (ip) => {
+					setIpBusy(ip);
+					setIpMsg('');
+					setIpBad(false);
+					postIp('/reproxy-lan/block', ip).then((body) => {
+						if (!body || body.ok !== true) throw new Error((body && body.error) || '添加失败');
+						setState(body);
+						setClients(Array.isArray(body.clients) ? body.clients : []);
+						setBlacklistOn(body.blacklistEnabled === true);
+						setIpMsg(body.added === false ? (ip + ' 已经在黑名单里，没有重复添加') : (ip + ' 已加入黑名单'));
+					}).catch((e) => { setIpBad(true); setIpMsg(String((e && e.message) || e)); }).then(() => setIpBusy(''));
+				};
+				const removeBlock = (ip) => {
+					setIpBusy(ip);
+					setIpMsg('');
+					setIpBad(false);
+					postIp('/reproxy-lan/unblock', ip).then((body) => {
+						if (!body || body.ok !== true) throw new Error((body && body.error) || '移除失败');
+						setState(body);
+						setClients(Array.isArray(body.clients) ? body.clients : []);
+						setBlacklistOn(body.blacklistEnabled === true);
+						setIpMsg(ip + ' 已移出黑名单');
+					}).catch((e) => { setIpBad(true); setIpMsg(String((e && e.message) || e)); }).then(() => setIpBusy(''));
+				};
+				const toggleBlacklist = () => {
+					setIpBusy('switch');
+					setIpMsg('');
+					setIpBad(false);
+					writeBlacklist(!blacklistOn).then((body) => {
+						if (!body || body.ok !== true) throw new Error((body && body.error) || '保存失败');
+						setState(body);
+						setClients(Array.isArray(body.clients) ? body.clients : []);
+						setBlacklistOn(body.blacklistEnabled === true);
+						setIpMsg(body.blacklistEnabled ? '黑名单已打开' : '黑名单已关闭（名单保留）');
+					}).catch((e) => { setIpBad(true); setIpMsg(String((e && e.message) || e)); }).then(() => setIpBusy(''));
+				};
 				const on = !!(state && state.lanAccess);
 				const port = state && state.port ? state.port : 8080;
+				const blockedIps = state && Array.isArray(state.blockedIps) ? state.blockedIps : [];
 				const status = state === null ? '读取中…' : (on ? '已开启：同一网络里的设备都能直接进入 0.0.0.0:' + port : '已关闭：只有本机能打开 127.0.0.1:' + port);
 				return h('div', { className: 'reproxy-lan' },
 					h('style', { 'data-plugin': 'dsh-plugin-reverse-proxy-lan' }, STYLE),
@@ -232,6 +306,44 @@ window.__ModuleLoader__.load({
 								disabled: portBusy || state === null,
 								onClick: savePort
 							}, portBusy ? '保存中…' : '保存')
+						)
+					),
+					h('div', { className: 'reproxy-lan-row' },
+						h('div', { style: { width: '100%', minWidth: 0 } },
+							h('div', { className: 'reproxy-lan-title' }, '访问 IP'),
+							h('div', { className: 'reproxy-lan-desc' }, '最近连过这个端口的设备。点「添加」把它的 IP 拉进黑名单：被拉黑的设备再打开后台只会看到 403，直到你在这里移除。'),
+							h('div', { className: 'reproxy-lan-list' },
+								clients.length === 0
+									? h('div', { className: 'reproxy-lan-meta' }, '还没有记录（有人访问后台后才会出现）')
+									: clients.map((item) => h('div', { key: item.ip, className: 'reproxy-lan-ip' },
+										h('span', null, item.ip),
+										h('span', { className: 'reproxy-lan-meta' }, '最近 ' + new Date(item.lastSeen).toLocaleTimeString() + ' · 共 ' + item.hits + ' 次'),
+										h('button', {
+											className: 'reproxy-lan-add',
+											type: 'button',
+											disabled: item.blocked || ipBusy === item.ip,
+											onClick: () => applyBlock(item.ip)
+										}, item.blocked ? '已在黑名单' : (ipBusy === item.ip ? '添加中…' : '添加'))
+									))
+							),
+							h('div', { className: 'reproxy-lan-ctl', style: { marginTop: '14px', justifyContent: 'flex-start' } },
+								h('span', { className: 'reproxy-lan-state' }, '黑名单开关（无需求请勿开启）'),
+								h('button', {
+									className: 'reproxy-lan-switch' + (blacklistOn ? ' on' : ''),
+									type: 'button',
+									'aria-pressed': blacklistOn ? 'true' : 'false',
+									disabled: ipBusy === 'switch',
+									title: blacklistOn ? '点击关闭黑名单（名单保留）' : '点击打开黑名单',
+									onClick: toggleBlacklist
+								}, h('i'))
+							),
+							blockedIps.length === 0 ? null : h('div', { className: 'reproxy-lan-chips' },
+								blockedIps.map((ip) => h('span', { key: ip, className: 'reproxy-lan-chip' },
+									ip,
+									h('button', { type: 'button', disabled: ipBusy === ip, onClick: () => removeBlock(ip) }, ipBusy === ip ? '…' : '移除')
+								))
+							),
+							ipMsg ? h('div', { className: ipBad ? 'reproxy-lan-err' : 'reproxy-lan-ok', style: { marginTop: '8px' } }, ipMsg) : null
 						)
 					),
 					portMsg ? h('div', { className: portBad ? 'reproxy-lan-err' : 'reproxy-lan-ok' }, portMsg) : null,
