@@ -16,6 +16,7 @@
  * 端口被占用（例如 nginx 还没停）时每 5 秒重试，不抛异常拖垮宿主。
  */
 
+import crypto from 'node:crypto'
 import http from 'node:http'
 import net from 'node:net'
 import zlib from 'node:zlib'
@@ -28,15 +29,20 @@ import {
   effectivePort,
   getLanState,
   LAN_WARNING_TEXT,
+  MIN_KEY_LENGTH,
+  PUBLIC_WARNING_TEXT,
   isBlocked,
   normalizeIp,
   resetConfig,
   onLanChange,
+  setAccessKey,
   setBlacklistEnabled,
   setLanAccess,
+  setPublicAccess,
   setPort,
   STATE_FILE,
   unblockIp,
+  validateKey,
   validatePort,
 } from './lan-access.js'
 
@@ -125,6 +131,28 @@ function isImmutableAsset(url) {
  * 局域网开关的两个入口（设置页走 HTTP，命令行走 /lan 斜杠命令）。
  * 两边都改同一份 lan-access 状态文件，所以永远同步；改完立刻重建监听。
  */
+/** 内网/本机地址判定：总开关开着但没开公网时，只放行这些来源。 */
+export function isPrivateIp(value) {
+  const ip = normalizeIp(value)
+  if (ip === '') return false
+  if (ip === '::1') return true
+  if (net.isIPv6(ip)) {
+    const lower = ip.toLowerCase()
+    if (lower.startsWith('fc') || lower.startsWith('fd')) return true // fc00::/7
+    if (lower.startsWith('fe8') || lower.startsWith('fe9') || lower.startsWith('fea') || lower.startsWith('feb')) return true // fe80::/10
+    return false
+  }
+  const parts = ip.split('.').map((item) => Number(item))
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n))) return false
+  const [a, b] = parts
+  if (a === 127) return true // 回环
+  if (a === 10) return true
+  if (a === 172 && b >= 16 && b <= 31) return true
+  if (a === 192 && b === 168) return true
+  if (a === 169 && b === 254) return true // 链路本地
+  return false
+}
+
 function registerLanControl(ctx, cfg, log, extra = {}) {
   const sendJson = (res, status, body) => {
     const raw = JSON.stringify(body)
@@ -361,6 +389,66 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
     },
   }
 
+  /** 公网开关：必须同时给合法密钥；缺密钥直接 400。 */
+  const routePublic = {
+    kind: 'exact',
+    path: '/reproxy-lan/public',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { ok: false, error: '只支持 POST' })
+        return
+      }
+      let body
+      try {
+        body = await readBody(req)
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+        return
+      }
+      if (body.confirm !== true) {
+        sendJson(res, 400, { ok: false, error: '缺少用户确认（confirm:true）', warning: PUBLIC_WARNING_TEXT })
+        return
+      }
+      if (typeof body.enabled !== 'boolean') {
+        sendJson(res, 400, { ok: false, error: 'enabled 必须是布尔值' })
+        return
+      }
+      try {
+        const next = setPublicAccess(body.enabled, body.key, 'settings')
+        log(body.enabled ? 'warn' : 'info', '设置页把公网访问' + (body.enabled ? '打开' : '关掉'))
+        sendJson(res, 200, { ...next, warning: PUBLIC_WARNING_TEXT })
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+      }
+    },
+  }
+
+  /** 只改密钥：不允许在公网已开时改成空。 */
+  const routeKey = {
+    kind: 'exact',
+    path: '/reproxy-lan/key',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { ok: false, error: '只支持 POST' })
+        return
+      }
+      let body
+      try {
+        body = await readBody(req)
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+        return
+      }
+      try {
+        setAccessKey(body.key, 'settings')
+        log('warn', '设置页更新了公网访问密钥')
+        sendJson(res, 200, describeLanState())
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+      }
+    },
+  }
+
   const webServer = ctx && typeof ctx.get === 'function' ? ctx.get('webServer') : null
   if (webServer && typeof webServer.register === 'function' && typeof ctx.effect === 'function') {
     ctx.effect(() => webServer.register(routeStatus))
@@ -370,6 +458,8 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
     ctx.effect(() => webServer.register(routeBlacklist))
     ctx.effect(() => webServer.register(routeBlock))
     ctx.effect(() => webServer.register(routeUnblock))
+    ctx.effect(() => webServer.register(routePublic))
+    ctx.effect(() => webServer.register(routeKey))
   } else {
     log('warn', 'webServer 不可用，设置页开关接口未注册')
   }
@@ -389,13 +479,16 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
       ? '局域网访问：已开启（监听 0.0.0.0:' + port + '，同网段设备可直接进入后台）'
       : '局域网访问：已关闭（只监听 127.0.0.1:' + port + '，只有本机能访问）'
     const when = s.updatedAt ? '上次修改：' + s.updatedAt + '（' + (s.updatedBy || 'unknown') + '）' : '还没有改过，当前是默认值'
-    return [head, when].join('\n')
+    const pub = s.publicAccess
+      ? '公网访问：已开启（访问地址 http://<公网IP>:' + port + '/' + (s.accessKey || '') + '）'
+      : '公网访问：已关闭（只有局域网内设备能访问）'
+    return [head, pub, when].join('\n')
   }
 
   ctx.effect(() => commands.register({
     name: 'lan',
-    description: '查看或切换局域网访问开关与端口（/lan yes / /lan no / /lan port 9000）',
-    input: { hint: 'yes | no | status | port <n>' },
+    description: '查看或切换局域网/公网访问开关、端口与访问密钥',
+    input: { hint: 'yes | no | status | port <n> | public on <key> | public off | key <key>' },
     recordInput: true,
     handler: ({ rawInput }) => {
       const arg = String(rawInput || '').trim().toLowerCase()
@@ -424,6 +517,56 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
         }
         log('info', '命令行切换局域网访问 → 关闭')
         return { kind: 'success', text: '已关闭，其他设备会立刻断开。\n' + statusText() }
+      }
+      if (arg === 'public' || arg === 'public status') {
+        const s = getLanState()
+        return {
+          kind: 'success',
+          text: [
+            statusText(),
+            '',
+            '开启公网：/lan public on <访问密钥>（至少 ' + MIN_KEY_LENGTH + ' 位，只能字母数字）',
+            '关闭公网：/lan public off',
+            '只改密钥：/lan key <访问密钥>',
+            '',
+            PUBLIC_WARNING_TEXT,
+          ].join('\n'),
+        }
+      }
+      if (arg.indexOf('public on') === 0) {
+        const key = arg.slice('public on'.length).trim()
+        try {
+          // 一条命令把两个开关都打开：总开关（端口朝外听）+ 公网开关（校验密钥）
+          const wasLan = getLanState().lanAccess
+          if (!wasLan) setLanAccess(true, 'command')
+          setPublicAccess(true, key, 'command')
+          log('warn', '命令行开启公网访问' + (wasLan ? '' : '（同时打开局域网访问）'))
+        } catch (e) {
+          return { kind: 'error', text: '开启失败：' + e.message }
+        }
+        return { kind: 'success', text: PUBLIC_WARNING_TEXT + '\n\n已开启：局域网访问 + 公网访问都打开了。\n' + statusText() }
+      }
+      if (arg === 'public off') {
+        try {
+          setPublicAccess(false, undefined, 'command')
+        } catch (e) {
+          return { kind: 'error', text: '关闭失败：' + e.message }
+        }
+        log('info', '命令行关闭公网访问')
+        return { kind: 'success', text: '公网访问已关闭。\n' + statusText() }
+      }
+      if (arg.indexOf('key') === 0) {
+        const key = arg.slice(3).trim()
+        if (key === '') return { kind: 'error', text: '用法：/lan key <访问密钥>（至少 ' + MIN_KEY_LENGTH + ' 位）' }
+        const parsed = validateKey(key)
+        if (!parsed.ok) return { kind: 'error', text: parsed.error }
+        try {
+          setAccessKey(parsed.key, 'command')
+        } catch (e) {
+          return { kind: 'error', text: '保存失败：' + e.message }
+        }
+        log('warn', '命令行更新了公网访问密钥')
+        return { kind: 'success', text: '密钥已更新。\n' + statusText() }
       }
       if (arg === 'reset') {
         return {
@@ -467,7 +610,7 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
         log('info', '命令行把监听端口改为 ' + parsed.port)
         return { kind: 'success', text: '端口已改为 ' + parsed.port + '，正在重建监听（端口被占用的话会每 5 秒重试）。\n' + statusText() }
       }
-      return { kind: 'error', text: '看不懂「' + arg + '」。用法：/lan（看状态）、/lan yes（开启）、/lan no（关闭）、/lan port 9000（改端口）' }
+      return { kind: 'error', text: '看不懂「' + arg + '」。用法：/lan（看状态）、/lan yes（开局域网）、/lan no（关局域网）、/lan port 9000（改端口）、/lan public on <密钥>（开公网）、/lan public off、/lan key <密钥>' }
     },
   }))
   console.log('[reproxy-lan] /lan 命令已注册')
@@ -519,7 +662,7 @@ function applyProxy(ctx, config) {
   /** 给设置页看的快照（带 blocked 标记，前端据此决定按钮是「添加」还是「已在黑名单」）。 */
   const listClients = () => [...seenClients.values()]
     .sort((a, b) => b.lastSeen - a.lastSeen)
-    .map((entry) => ({ ...entry, blocked: isBlocked(entry.ip) }))
+    .map((entry) => ({ ...entry, blocked: isBlocked(entry.ip), private: isPrivateIp(entry.ip) }))
 
   const BLOCKED_HTML = '<!doctype html><html lang="zh-CN"><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -530,6 +673,84 @@ function applyProxy(ctx, config) {
     + '管理员在 DSH 设置里把当前 IP 加进了黑名单，所以这台设备无法访问后台。'
     + '如果认为这是误会，请联系管理员在「设置 → 局域网访问 → 访问 IP」里移除。'
     + '</p></body></html>'
+
+  const LAN_ONLY_HTML = '<!doctype html><html lang="zh-CN"><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    + '<title>403 · 只允许局域网访问</title>'
+    + '<body style="margin:0;font:15px/1.8 -apple-system,system-ui,sans-serif;background:#12141a;color:#e6e8ee;padding:56px 24px">'
+    + '<h2 style="margin:0 0 12px;font-size:20px">403 · 只允许局域网访问</h2>'
+    + '<p style="margin:0;color:#9aa0ad;max-width:560px">'
+    + '这台设备不在同一个局域网里。管理员如果想允许公网访问，需要在「设置 → 局域网访问 → 公网访问」里打开开关并设置访问密钥。'
+    + '</p></body></html>'
+
+  const NOT_FOUND_HTML = '<!doctype html><html lang="zh-CN"><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    + '<title>404</title>'
+    + '<body style="margin:0;font:15px/1.8 -apple-system,system-ui,sans-serif;background:#12141a;color:#e6e8ee;padding:56px 24px">'
+    + '<h2 style="margin:0 0 12px;font-size:20px">404</h2>'
+    + '<p style="margin:0;color:#9aa0ad;max-width:560px">页面不存在。</p></body></html>'
+
+  const sendHtml = (res, status, html, extraHeaders = {}) => {
+    try {
+      const body = Buffer.from(html, 'utf8')
+      res.writeHead(status, {
+        'content-type': 'text/html; charset=utf-8',
+        'content-length': body.length,
+        'cache-control': 'no-store',
+        ...extraHeaders,
+      })
+      res.end(body)
+    } catch { /* 连接已断 */ }
+  }
+
+  const COOKIE_NAME = 'reproxy_access'
+  const tokenOf = (key) => crypto.createHash('sha256').update('reproxy:' + key).digest('hex')
+
+  const readCookie = (req, name) => {
+    const raw = req && req.headers ? req.headers.cookie : ''
+    if (typeof raw !== 'string' || raw === '') return ''
+    for (const part of raw.split(';')) {
+      const index = part.indexOf('=')
+      if (index === -1) continue
+      if (part.slice(0, index).trim() === name) return part.slice(index + 1).trim()
+    }
+    return ''
+  }
+
+  /**
+   * 访问闸门：
+   * - 总开关关着 → 只听回环，非回环一律当「不在局域网」（理论上不该出现）
+   * - 总开关开、公网关 → 只放行内网地址，公网 IP 返回 403「只允许局域网访问」
+   * - 公网开 → 必须带密钥：地址里带 `/<密钥>`（访问一次换 cookie）或已持有有效 cookie，否则 404
+   * 返回 'ok' | 'grant-key' | 'lan-only' | 'need-key' | 'key-broken'
+   */
+  const accessGate = (req) => {
+    const state = getLanState()
+    const ip = normalizeIp(req && req.socket ? req.socket.remoteAddress : '')
+    const local = ip === '' || ip === '::1' || /^127\./.test(ip)
+    // 本机永远放行：要不就没有「安全阀」了——公网模式开着、密钥忘了，本机也进不来
+    if (local) return 'ok'
+    if (state.lanAccess !== true) return 'lan-only'
+    // 内网地址永远直连（是否允许内网由总开关管），公网模式只约束公网来源
+    if (isPrivateIp(ip)) return 'ok'
+    if (state.publicAccess !== true) return 'lan-only'
+    const key = typeof state.accessKey === 'string' ? state.accessKey : ''
+    if (key === '') return 'key-broken'
+    const pathOnly = String(req.url || '/').split('?')[0]
+    if (pathOnly === '/' + key || pathOnly === '/' + key + '/') return 'grant-key'
+    const token = readCookie(req, COOKIE_NAME)
+    if (token !== '' && token === tokenOf(key)) return 'ok'
+    return 'need-key'
+  }
+
+  const grantKeyCookie = (res) => {
+    const key = (getLanState().accessKey || '')
+    const maxAge = 30 * 24 * 3600
+    return {
+      'set-cookie': COOKIE_NAME + '=' + tokenOf(key) + '; Max-Age=' + maxAge + '; Path=/; HttpOnly; SameSite=Lax',
+      location: '/',
+    }
+  }
 
   const sendBlocked = (res) => {
     try {
@@ -571,6 +792,14 @@ function applyProxy(ctx, config) {
     const clientIp = noteClient(req)
     if (clientIp !== '' && isBlocked(clientIp)) {
       sendBlocked(res)
+      return
+    }
+    const verdict = accessGate(req)
+    if (verdict === 'lan-only') { sendHtml(res, 403, LAN_ONLY_HTML); return }
+    if (verdict === 'need-key' || verdict === 'key-broken') { sendHtml(res, 404, NOT_FOUND_HTML); return }
+    if (verdict === 'grant-key') {
+      const headers = grantKeyCookie(res)
+      sendHtml(res, 302, '<!doctype html><meta charset="utf-8"><title>ok</title>', headers)
       return
     }
     let received = 0
@@ -638,6 +867,12 @@ function applyProxy(ctx, config) {
       try { clientSocket.end('HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\nconnection: close\r\n\r\n') } catch { /* 已关 */ }
       return
     }
+    const upgradeVerdict = accessGate(req)
+    if (upgradeVerdict !== 'ok' && upgradeVerdict !== 'grant-key') {
+      const status = upgradeVerdict === 'lan-only' ? '403 Forbidden' : '404 Not Found'
+      try { clientSocket.end('HTTP/1.1 ' + status + '\r\ncontent-length: 0\r\nconnection: close\r\n\r\n') } catch { /* 已关 */ }
+      return
+    }
     const upstream = net.connect(cfg.upstreamPort, cfg.upstreamHost, () => {
       const headers = upstreamHeaders(req, cfg, {
         connection: 'Upgrade',
@@ -699,10 +934,16 @@ function applyProxy(ctx, config) {
     return server
   }
 
+  // 记住「当前真正在监听」的地址：公网开关/密钥变化不该触发重建监听
+  let appliedHost = ''
+  let appliedPort = 0
+
   const startHosts = () => {
     // 端口可能在运行期被改过：每次重建监听都从状态文件取一次
     cfg.listenPort = effectivePort()
     const host = cfg.listenHost = effectiveListenHost()
+    appliedHost = host
+    appliedPort = cfg.listenPort
     start(host)
     // IPv6 用 ipv6Only，否则 Linux 双栈会把 0.0.0.0 占的端口算作冲突
     if (cfg.listenIpv6 && host === '0.0.0.0') {
@@ -722,7 +963,14 @@ function applyProxy(ctx, config) {
 
   let unsubscribeLan = () => {}
   try {
-    unsubscribeLan = onLanChange(() => rebind())
+    unsubscribeLan = onLanChange(() => {
+      // 只有「监听地址 / 端口」变了才需要重建监听；
+      // 公网开关、访问密钥、黑名单这些只影响请求判定，重建反而会让正在用的连接断掉
+      const host = effectiveListenHost()
+      const port = effectivePort()
+      if (host === appliedHost && port === appliedPort) return
+      rebind()
+    })
   } catch { /* 订阅失败不连坐 */ }
 
   try {
