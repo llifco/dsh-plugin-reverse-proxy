@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-reverse-proxy",
-  "version": "0.5.1",
-  "description": "DSH Web 局域网访问插件：内置反向代理 + 免 Token 登录，手机/平板同 Wi-Fi 直接打开后台；端口可自定义，支持访问 IP 黑名单与一键重置。默认只监听本机，需显式开启。",
+  "version": "0.6.0",
+  "description": "DSH Web 局域网/公网访问插件：内置反向代理 + 免 Token 登录，手机同 Wi-Fi 直接打开后台；公网访问需开关 + 访问密钥（地址变成 /密钥）；端口可改，带访问 IP 黑名单与一键重置。",
   "type": "module",
   "main": "index.js",
   "exports": {
