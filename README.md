@@ -21,6 +21,7 @@
 
 > 一条命令装上，局域网里的手机、平板、另一台电脑就能直接打开你的 DSH 网页界面，
 > **而且不用再从启动日志里抄那串随机 token**。
+> 出门在外想用？打开「公网访问」设个密钥，地址变成 `http://公网IP:8080/你的密钥`——不知道密钥的人只会看到 404。
 
 ```bash
 dsh plugin --profile web add dsh-plugin-reverse-proxy   # 推荐：npm 包，免构建
@@ -33,17 +34,13 @@ dsh plugin --profile web add dsh-plugin-reverse-proxy   # 推荐：npm 包，免
 
 ## 长什么样
 
-**设置 → 局域网访问**（默认关闭，点开关会先弹出一次安全确认）：
+**设置 → 局域网访问**（0.6.0 一页搞定）：总开关、监听端口、公网访问与密钥、访问 IP（每行带「公网 / 内网」标签，卡片内滚动）。点开关会先弹一次安全确认：
 
 <p align="center">
   <img src="assets/settings-lan-access.jpg" width="620" alt="设置 · 局域网访问">
 </p>
 
-**访问 IP 与黑名单**（0.5.0 起）——点「添加」把设备拉黑，它再打开后台只会看到 403：
-
-<p align="center">
-  <img src="assets/access-ip.jpg" width="620" alt="设置 · 访问 IP 与黑名单">
-</p>
+点「添加」把设备拉黑，它再打开后台只会看到 403：
 
 <p align="center">
   <img src="assets/blocked-403.jpg" width="320" alt="被拉黑设备看到的 403 页面">
@@ -53,7 +50,7 @@ dsh plugin --profile web add dsh-plugin-reverse-proxy   # 推荐：npm 包，免
 
 ---
 
-## 四个能力
+## 五个能力
 
 > 0.3.5 起：设置页开关换成紫色，**监听端口**也能自己填了（默认 8080，保存即生效，重启保留）。
 
@@ -94,6 +91,9 @@ dsh plugin --profile web add dsh-plugin-reverse-proxy   # 推荐：npm 包，免
 
 > ⚠️ 开启后，同一网络里的任何设备直接访问 `http://<这台机器的IP>:<端口>` 就能进入完整后台
 > （会话、终端、设置），不需要 Token、不需要登录。只在信任当前局域网时开启。
+>
+> 总开关只管**局域网**：来自公网的 IP 会被直接拦下（403「只允许局域网访问」）。
+> 要从公网进来，得再开下面的「公网访问」并设置访问密钥。
 
 #### 怎么用（三个入口，改的是同一份状态）
 
@@ -149,7 +149,32 @@ reproxy-lan --help
 想彻底关闭又不点开关？`reproxy-lan disable` 或 `/lan no` 都行；想手动改文件也可以，
 插件用 `fs.watch` 盯着它，改完一两秒内自动生效（`updatedBy` 可以写 `manual`）。
 
-### 3. 访问 IP 与黑名单（默认关闭）
+### 3. 公网访问与访问密钥（默认关闭）
+
+总开关只管局域网。要让公网也能进来，再开一道闸——**公网开关 + 访问密钥**：
+
+- 设置页：**设置 → 局域网访问 → 公网访问**，填「访问密钥」（至少 5 位，只能英文字母和数字，拼音可以、符号不行），
+  点「保存并开启」；没有密钥时开关点不动（后端直接 400）。**没打开「局域网访问」总开关时公网开关也点不动**——端口只绑 127.0.0.1，开了也没人能连进来。
+- 斜杠命令：`/lan public` 看状态、`/lan public on <密钥>` 开启、`/lan public off` 关闭、`/lan key <密钥>` 只换密钥。
+- 终端：`reproxy-lan public on`（**一键开启**：先看安全提示 → 输入访问密钥 → 输入 `yes` 确认，**总开关和公网开关会一起打开**）、`reproxy-lan public on <密钥>`（密钥直接写在命令里）、`reproxy-lan public off`、`reproxy-lan key <密钥>`；`reproxy-lan status` 里能看到公网状态与密钥掩码。
+
+开启后访问地址变成：
+
+```
+http://<公网IP>:<端口>/<访问密钥>
+```
+
+用这条地址访问一次，会种一个 **30 天有效**的 cookie；之后刷新页面、加载资源、WebSocket 实时通道都不用再带密钥。
+地址里没带密钥、或者密钥不对，返回 **404**——不告诉对面「这里有个后台」，只是查不到。
+
+- 密钥是唯一凭证：换密钥后旧地址立刻失效，所有设备都得重新用新地址访问一次。
+- 公网模式只约束**公网来源**：局域网设备（192.168 / 10 / 172.16-31 等）照样直连，不用带密钥；`127.0.0.1` 永远放行（安全阀：密钥忘了也能在本机改回来）。
+- `reset` 会一并关掉公网访问并清空密钥。
+
+> ⚠️ 两件事要记住：① 插件只负责「放行」，公网能不能进来还取决于路由器 / 防火墙有没有把端口映射出去；
+> ② 密钥等于钥匙，别发到群里、别写进截图、别贴在公开 issue 里。
+
+### 4. 访问 IP 与黑名单（默认关闭）
 
 设置页还有一张「访问 IP」卡片：
 
@@ -176,7 +201,7 @@ reproxy-lan reset      # 先给你看会重置什么，输入 yes 才执行
 > ⚠️ 不要拉黑「当前正在使用的这台设备」——后端会直接拒绝（400），回环地址 `127.0.0.1` 也不允许拉黑，
 > 免得管理员把自己锁在外面。真要封自己，先在另一台设备上操作。
 
-### 4. 免 Token 登录（版本门控，命中才启用）
+### 5. 免 Token 登录（版本门控，命中才启用）
 
 替换官方 `@deepseek-ai/dsh-client-connection` 提供方，跳过 BrowserAuth：
 浏览器直接打开 Web 地址就能用。
@@ -188,6 +213,17 @@ reproxy-lan reset      # 先给你看会重置什么，输入 yes 才执行
 
 > 这部分参考并内联自 [`@iasiv5/dsh-skip-browser-auth`](https://github.com/iasiv5/dsh-skip-browser-auth)（MIT），
 > 在 `vendor/skip/` 下，保留其 LICENSE 与 NOTICE。
+
+---
+
+## 说明（开「公网访问」之前请先读）
+
+- **能不能从外网进来，不归插件管。** 插件只负责「在这台机器上放行 + 校验密钥」；真正的入口是路由器 / 防火墙的端口映射（把 `8080` 转发到这台机器），映射没做，公网地址打不开是正常的。
+- **传输是明文 HTTP。** 密钥只保护「谁能进后台」，不保护「路上的内容」。公网长期用建议套一层 HTTPS（Cloudflare Tunnel、frp + TLS、Tailscale 之类），或者只在临时场景开。
+- **密钥丢了不用慌。** 本机 `127.0.0.1` 永远放行：直接打开 `http://127.0.0.1:8080` 改设置，或在终端 `reproxy-lan key <新密钥>`；实在乱了就 `reproxy-lan reset` 回到默认（会关掉局域网与公网、清空黑名单，密钥一并清掉）。
+- **黑名单防的是误入，不是攻击。** 它拦的是「这个 IP 不给进」，不拦端口扫描和流量攻击；公网暴露时建议在防火墙上只放行需要的端口。
+- **同一浏览器同时只能开一个标签页。** 这是 DSH 官方身份模型的限制（一个浏览器 = 一份连接），插件绕不过去；换设备或用无痕窗口不受影响。
+- **端口别贪心。** `80` / `443` 要 root 且常被别的服务占着，`3080` 是 dsh 本体，插件只收 `1024–65535`。
 
 ---
 
@@ -259,6 +295,11 @@ reproxy-lan enable    # 读完提示，输入 yes
 | `upstreamOrigin` | `http://127.0.0.1:3080` | `proxy_set_header Origin` |
 | `maxBodyBytes` | `209715200` | `client_max_body_size 200m` |
 | `retryMs` | `5000` | —（端口冲突重试间隔） |
+
+开关类设置（`lanAccess` / `port` / `publicAccess` / `accessKey` / `blacklistEnabled` / `blockedIps`）
+不写进 `cordis.patch.yml`，而是存在状态文件 `$DSH_HOME/plugin-reverse-proxy/lan-access.json`
+（默认 `~/.dsh/plugin-reverse-proxy/lan-access.json`，权限 600）。改这个文件也会被插件立刻读到，
+但更推荐用设置页、`/lan` 命令或 `reproxy-lan` 脚本改 —— 它们会顺手校验并广播。
 
 免 Token 登录（`dsh-plugin-reverse-proxy-trusted-connection*` 行）的 `trustedHosts`
 由 DSH 的 Web 运行时配置自动注入，一般不用手改。
