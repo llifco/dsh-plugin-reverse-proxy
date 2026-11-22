@@ -119,6 +119,15 @@ window.__ModuleLoader__.load({
 			'.reproxy-lan-note{margin-top:10px;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.75;color:var(--dsw-alias-label-secondary,#9aa0ad);background:rgba(255,255,255,.04);border:1px solid var(--dsw-alias-border-l1,#333947)}',
 			'.reproxy-lan-note b{color:var(--dsw-alias-label-primary,#e8ebf2);font-weight:600}',
 			'.reproxy-lan-err{font-size:12px;color:#ff6b6b}',
+			'.reproxy-lan-scroll{margin-top:10px;max-height:212px;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;gap:6px;padding:8px;border-radius:10px;border:1px solid var(--dsw-alias-border-l1,#333947);background:rgba(0,0,0,.16);overscroll-behavior:contain}',
+			'.reproxy-lan-scroll::-webkit-scrollbar{width:8px}',
+			'.reproxy-lan-scroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,.16);border-radius:999px}',
+			'.reproxy-lan-group{display:flex;flex-direction:column;gap:6px}',
+			'.reproxy-lan-grouphead{display:flex;align-items:center;gap:8px;margin:2px 0 2px}',
+			'.reproxy-lan-badge{flex:none;font-size:11px;line-height:1;padding:4px 8px;border-radius:999px;border:1px solid rgba(139,92,246,.5);color:#c4b5fd;background:rgba(139,92,246,.12)}',
+			'.reproxy-lan-badge.lan{border-color:rgba(94,224,138,.45);color:#8fe6b0;background:rgba(94,224,138,.1)}',
+			'.reproxy-lan-empty{font-size:12px;color:var(--dsw-alias-label-secondary,#8b90a0);padding:2px 0 6px}',
+			'.reproxy-lan-ip{display:flex;align-items:center;gap:10px;font-size:13px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-primary,#e6e8ee);padding:2px 0}',
 			'.reproxy-lan-list{margin-top:10px;display:flex;flex-direction:column;gap:6px}',
 			'.reproxy-lan-ip{display:flex;align-items:center;gap:10px;font-size:13px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-primary,#e6e8ee)}',
 			'.reproxy-lan-add{border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer;border:1px solid rgba(139,92,246,.7);background:transparent;color:#c4b5fd}',
@@ -163,6 +172,16 @@ window.__ModuleLoader__.load({
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ enabled })
 			}).then((r) => r.json());
+			const writePublic = (enabled, key) => fetch('/reproxy-lan/public', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ enabled, key, confirm: true })
+			}).then((r) => r.json());
+			const writeKey = (key) => fetch('/reproxy-lan/key', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ key })
+			}).then((r) => r.json());
 			function Panel() {
 				const [state, setState] = React.useState(null);
 				const [asking, setAsking] = React.useState(false);
@@ -177,6 +196,10 @@ window.__ModuleLoader__.load({
 				const [ipBusy, setIpBusy] = React.useState('');
 				const [ipMsg, setIpMsg] = React.useState('');
 				const [ipBad, setIpBad] = React.useState(false);
+				const [keyDraft, setKeyDraft] = React.useState('');
+				const [pubBusy, setPubBusy] = React.useState(false);
+				const [pubMsg, setPubMsg] = React.useState('');
+				const [pubBad, setPubBad] = React.useState(false);
 				React.useEffect(() => {
 					let alive = true;
 					readState().then((body) => {
@@ -225,6 +248,25 @@ window.__ModuleLoader__.load({
 						setPortMsg('已保存，正在切到 ' + body.port + ' 端口');
 					}).catch((e) => fail(String((e && e.message) || e))).then(() => setPortBusy(false));
 				};
+				const applyPublic = (enabled) => {
+					const fail = (msg) => { setPubBad(true); setPubMsg(msg); };
+					const key = String(keyDraft).trim();
+					if (enabled && key === '' && !(state && state.publicAccess === true)) {
+						return fail('开启公网访问前必须输入访问密钥（至少 5 位字母或数字）');
+					}
+					if (key !== '' && !/^[A-Za-z0-9]{5,64}$/.test(key)) {
+						return fail('访问密钥至少 5 位，只能包含英文字母和数字（拼音可以，符号不行）');
+					}
+					setPubBusy(true);
+					setPubMsg('');
+					setPubBad(false);
+					writePublic(enabled, key === '' ? undefined : key).then((body) => {
+						if (!body || body.ok !== true) throw new Error((body && body.error) || '保存失败');
+						setState(body);
+						if (key !== '') setKeyDraft('');
+						setPubMsg(enabled ? '公网访问已开启，用下面那条地址访问' : '公网访问已关闭');
+					}).catch((e) => fail(String((e && e.message) || e))).then(() => setPubBusy(false));
+				};
 				const applyBlock = (ip) => {
 					setIpBusy(ip);
 					setIpMsg('');
@@ -261,6 +303,28 @@ window.__ModuleLoader__.load({
 						setIpMsg(body.blacklistEnabled ? '黑名单已打开' : '黑名单已关闭（名单保留）');
 					}).catch((e) => { setIpBad(true); setIpMsg(String((e && e.message) || e)); }).then(() => setIpBusy(''));
 				};
+				// 每行自己带「公网 / 内网」标签（用户要的排法：标签在 IP 前，末尾「添加」）
+				const renderIpRow = (item) => h('div', { key: item.ip, className: 'reproxy-lan-ip' },
+					h('span', { className: 'reproxy-lan-badge' + (item.private === true ? ' lan' : '') }, item.private === true ? '内网' : '公网'),
+					h('span', { style: { minWidth: '116px' } }, item.ip),
+					h('span', { className: 'reproxy-lan-meta' }, '最近 ' + new Date(item.lastSeen).toLocaleTimeString() + ' · 共 ' + item.hits + ' 次'),
+					h('button', {
+						className: 'reproxy-lan-add',
+						type: 'button',
+						disabled: item.blocked || ipBusy === item.ip,
+						onClick: () => applyBlock(item.ip)
+					}, item.blocked ? '已在黑名单' : (ipBusy === item.ip ? '添加中…' : '添加'))
+				);
+				// 公网排前面、内网排后面，行内各自带标签，不再分两段标题
+				const groupOf = (list) => {
+					const pub = list.filter((item) => item.private !== true);
+					const lan = list.filter((item) => item.private === true);
+					if (list.length === 0) {
+						return [h('div', { key: 'empty', className: 'reproxy-lan-empty' }, '暂时没有记录')];
+					}
+					return pub.concat(lan).map(renderIpRow);
+				};
+				const setPubMsg2 = (text) => { setPubMsg(text || ''); setPubBad(true); };
 				const on = !!(state && state.lanAccess);
 				const port = state && state.port ? state.port : 8080;
 				const blockedIps = state && Array.isArray(state.blockedIps) ? state.blockedIps : [];
@@ -310,22 +374,50 @@ window.__ModuleLoader__.load({
 					),
 					h('div', { className: 'reproxy-lan-row' },
 						h('div', { style: { width: '100%', minWidth: 0 } },
+							h('div', { className: 'reproxy-lan-title' }, '公网访问'),
+							h('div', { className: 'reproxy-lan-desc' }, '默认只放行局域网地址，公网 IP 会被拦下（403）。要允许公网访问，请开启这个开关并填写访问密钥——开启后访问地址会变成 http://<公网IP>:' + port + '/<访问密钥>，不知道密钥的人打开只会看到 404。'),
+							state && state.publicAccess ? h('div', { className: 'reproxy-lan-meta', style: { marginTop: '10px' } }, '当前访问地址：http://<公网IP>:' + port + (state.accessPath || '/<访问密钥>')) : null,
+							h('div', { className: 'reproxy-lan-port', style: { marginTop: '12px' } },
+								h('input', {
+									className: 'reproxy-lan-input',
+									style: { width: '180px', textAlign: 'left' },
+									type: 'text',
+									value: keyDraft,
+									disabled: pubBusy || state === null,
+									placeholder: state && state.hasKey ? ('已设置，' + String(state.keyHint || '') + '，输入新的可更换') : '访问密钥（至少 5 位）',
+									onChange: (e) => { setKeyDraft(e.target.value); setPubMsg(''); setPubBad(false); }
+								}),
+								h('button', {
+									className: 'reproxy-lan-save',
+									type: 'button',
+									disabled: pubBusy || state === null,
+									onClick: () => applyPublic(true)
+								}, pubBusy ? '保存中…' : '保存并开启')
+							),
+							h('div', { className: 'reproxy-lan-ctl', style: { marginTop: '14px', justifyContent: 'flex-start' } },
+								h('span', { className: 'reproxy-lan-state' }, '公网开关（无需求请勿开启）'),
+								h('button', {
+									className: 'reproxy-lan-switch' + (state && state.publicAccess ? ' on' : ''),
+									type: 'button',
+									'aria-pressed': state && state.publicAccess ? 'true' : 'false',
+									// 总开关没开时端口只绑 127.0.0.1，公网开了也进不来 —— 干脆不让点
+									disabled: pubBusy || state === null || !on,
+									title: !on ? '先打开上面的「局域网访问」总开关' : (state && state.publicAccess ? '点击关闭公网访问' : '点击开启公网访问（需先填密钥）'),
+									onClick: () => (on ? applyPublic(!(state && state.publicAccess === true)) : setPubMsg2('请先打开上面的「局域网访问」总开关，公网访问才有意义。'))
+								}, h('i'))
+							),
+							on ? null : h('div', { className: 'reproxy-lan-meta', style: { marginTop: '6px' } }, '总开关关着时端口只监听 127.0.0.1，公网开关点不动 —— 先打开上面的「局域网访问」。'),
+							pubMsg === '' ? null : h('div', { className: pubBad ? 'reproxy-lan-err' : 'reproxy-lan-ok', style: { marginTop: '8px' } }, pubMsg)
+						)
+					),
+					h('div', { className: 'reproxy-lan-row' },
+						h('div', { style: { width: '100%', minWidth: 0 } },
 							h('div', { className: 'reproxy-lan-title' }, '访问 IP'),
 							h('div', { className: 'reproxy-lan-desc' }, '最近连过这个端口的设备。点「添加」把它的 IP 拉进黑名单：被拉黑的设备再打开后台只会看到 403，直到你在这里移除。'),
-							h('div', { className: 'reproxy-lan-list' },
-								clients.length === 0
-									? h('div', { className: 'reproxy-lan-meta' }, '还没有记录（有人访问后台后才会出现）')
-									: clients.map((item) => h('div', { key: item.ip, className: 'reproxy-lan-ip' },
-										h('span', null, item.ip),
-										h('span', { className: 'reproxy-lan-meta' }, '最近 ' + new Date(item.lastSeen).toLocaleTimeString() + ' · 共 ' + item.hits + ' 次'),
-										h('button', {
-											className: 'reproxy-lan-add',
-											type: 'button',
-											disabled: item.blocked || ipBusy === item.ip,
-											onClick: () => applyBlock(item.ip)
-										}, item.blocked ? '已在黑名单' : (ipBusy === item.ip ? '添加中…' : '添加'))
-									))
-							),
+							clients.length === 0
+								? h('div', { className: 'reproxy-lan-list' },
+									h('div', { className: 'reproxy-lan-meta' }, '还没有记录（有人访问后台后才会出现）'))
+								: h('div', { className: 'reproxy-lan-scroll' }, groupOf(clients)),
 							h('div', { className: 'reproxy-lan-ctl', style: { marginTop: '14px', justifyContent: 'flex-start' } },
 								h('span', { className: 'reproxy-lan-state' }, '黑名单开关（无需求请勿开启）'),
 								h('button', {
@@ -337,7 +429,7 @@ window.__ModuleLoader__.load({
 									onClick: toggleBlacklist
 								}, h('i'))
 							),
-							blockedIps.length === 0 ? null : h('div', { className: 'reproxy-lan-chips' },
+							blockedIps.length === 0 ? null : h('div', { className: 'reproxy-lan-chips reproxy-lan-scroll', style: { flexDirection: 'row', flexWrap: 'wrap' } },
 								blockedIps.map((ip) => h('span', { key: ip, className: 'reproxy-lan-chip' },
 									ip,
 									h('button', { type: 'button', disabled: ipBusy === ip, onClick: () => removeBlock(ip) }, ipBusy === ip ? '…' : '移除')
