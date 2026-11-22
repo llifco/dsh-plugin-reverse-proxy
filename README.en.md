@@ -55,7 +55,7 @@ No GUI around? The same switch works from a terminal (`yes` is required) — see
 </p>
 ---
 
-## Four capabilities
+## Five capabilities
 
 > Since 0.3.5: the settings switch is purple, and the **listening port** is editable
 > (default 8080, applied on save, kept across restarts).
@@ -128,7 +128,33 @@ edits to that file are picked up within a second (`fs.watch`).
 
 ---
 
-### 3. Access IPs and blacklist (off by default)
+### 3. Public access and access key (off by default)
+
+The main switch only covers the LAN: requests arriving from a public IP get a **403 "LAN only"** page.
+To open it to the internet, add a second gate — **public switch + access key**:
+
+- Settings: **Settings → LAN access → Public access**, type an access key (5–64 characters, letters and digits only;
+  pinyin is fine, symbols are not), then hit **Save and enable**. The switch will not turn on without a key.
+- Slash command: `/lan public` (status), `/lan public on <key>`, `/lan public off`, `/lan key <key>`.
+- Terminal: `reproxy-lan public on <key>`, `reproxy-lan public off`, `reproxy-lan key <key>`; `status` shows the masked key.
+
+The URL becomes:
+
+```
+http://<public-ip>:<port>/<access-key>
+```
+
+Opening that URL once plants a **30-day cookie**; refreshes, assets and the WebSocket channel then work without the key
+in the URL. A request with no key, or the wrong key, gets a **404** — it does not advertise that a backend lives there.
+
+- The key is the only credential: change it and every old URL stops working immediately.
+- Public mode only constrains **non-private** sources: LAN devices (192.168 / 10 / 172.16-31 …) still connect without a key, and loopback is always allowed (so a forgotten key can always be fixed locally).
+- `reset` turns public access off and clears the key.
+
+> ⚠️ Two things to keep in mind: (1) this plugin only *allows* traffic — reaching it from the internet still depends on
+> your router / firewall port forwarding; (2) treat the key like a key — don't paste it into group chats, screenshots or issues.
+
+### 4. Access IPs and blacklist (off by default)
 
 - Lists every device that recently hit the port (IP, last seen, request count).
 - **Add** drops that IP into the blacklist; the device then gets a 403 page until you remove it.
@@ -145,7 +171,7 @@ reproxy-lan reset      # shows what will be restored, then asks you to type yes
 Or `/lan reset` in chat, confirmed with `/lan reset yes`. Reset turns LAN access off, port back to 8080,
 blacklist off and clears the list — devices currently connected over 8080 drop immediately, by design.
 
-### 4. Token-free login (version-gated)
+### 5. Token-free login (version-gated)
 
 Replaces the official `@deepseek-ai/dsh-client-connection` provider and skips BrowserAuth.
 
@@ -158,6 +184,17 @@ Replaces the official `@deepseek-ai/dsh-client-connection` provider and skips Br
 
 > Based on and partly inlined from [`@iasiv5/dsh-skip-browser-auth`](https://github.com/iasiv5/dsh-skip-browser-auth) (MIT),
 > kept under `vendor/skip/` with its LICENSE and NOTICE.
+
+---
+
+## Notes (read before turning on public access)
+
+- **Reaching you from the internet is not the plugin's job.** The plugin only decides "allowed here, key required" on this machine; the real door is your router / firewall port mapping (`8080` → this host). Without it, a public URL simply will not connect.
+- **Traffic is plain HTTP.** The key guards *who can get in*, not *what travels*. For long-term public exposure, put it behind HTTPS (Cloudflare Tunnel, frp + TLS, Tailscale) or use it only temporarily.
+- **Lost the key?** `127.0.0.1` is always allowed: open `http://127.0.0.1:8080`, change it in Settings, or run `reproxy-lan key <new-key>`; if things are messy, `reproxy-lan reset` restores defaults (LAN + public off, blacklist and key cleared).
+- **The blacklist stops accidents, not attackers.** It refuses a specific IP; it does not stop port scans or traffic floods. On the public internet, restrict ports at the firewall too.
+- **One tab per browser.** That is DSH's own identity model (one browser = one connection) and the plugin cannot bypass it; other devices or a private window are unaffected.
+- **Pick a sane port.** `80`/`443` need root and are often taken; `3080` is dsh itself. The plugin accepts `1024–65535`.
 
 ---
 
