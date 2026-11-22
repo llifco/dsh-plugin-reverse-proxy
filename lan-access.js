@@ -1,5 +1,6 @@
 /**
- * 局域网访问开关（0.3.2）+ 自定义端口（0.3.5）+ 访问 IP / 黑名单（0.5.0）。
+ * 局域网访问开关（0.3.2）+ 自定义端口（0.3.5）+ 访问 IP / 黑名单（0.5.0）
+ * + 公网访问与访问密钥（0.6.0）。
  *
  * 默认关闭：反代只监听 127.0.0.1，同一台机器上的浏览器才能打开。
  * 用户必须在设置页点开关（弹安全提示、点「确定」）或者在命令行里确认，
@@ -26,6 +27,18 @@ export const DEFAULT_PORT = 8080
 
 /** 黑名单最多记这么多条，防止状态文件无限长。 */
 export const MAX_BLOCKED = 200
+
+/** 访问密钥：5–64 位，只允许英文字母和数字（拼音就是字母，不能有符号）。 */
+export const MIN_KEY_LENGTH = 5
+export const MAX_KEY_LENGTH = 64
+
+export const PUBLIC_WARNING_TITLE = '对公网开放访问？'
+export const PUBLIC_WARNING_LINES = [
+  '开启后，任何设备只要拿到 公网IP:端口/访问密钥 这条地址，就能直接进入 DSH 后台。',
+  '密钥至少 5 位、只用字母和数字；它等于后台的钥匙，请勿外传，也不要贴在公开的地方。',
+  '公网访问还取决于路由器/防火墙有没有把该端口映射出去——插件只管放行，不管打洞。',
+]
+export const PUBLIC_WARNING_TEXT = [PUBLIC_WARNING_TITLE, ...PUBLIC_WARNING_LINES].join('\n')
 
 /** 安全提示文案：设置页弹窗与命令行共用同一份，避免两处说法不一致。 */
 export const LAN_WARNING_TITLE = '对局域网开放访问？'
@@ -54,6 +67,18 @@ export const validatePort = (value) => {
 }
 
 /**
+ * 访问密钥校验：5–64 位，只允许 A-Z a-z 0-9（拼音是字母，符号一律不收）。
+ * 返回 { ok, key } 或 { ok:false, error }。
+ */
+export const validateKey = (value) => {
+  const raw = typeof value === 'string' ? value.trim() : ''
+  if (raw.length < MIN_KEY_LENGTH) return { ok: false, error: `访问密钥至少 ${MIN_KEY_LENGTH} 位` }
+  if (raw.length > MAX_KEY_LENGTH) return { ok: false, error: `访问密钥不能超过 ${MAX_KEY_LENGTH} 位` }
+  if (!/^[A-Za-z0-9]+$/.test(raw)) return { ok: false, error: '访问密钥只能包含英文字母和数字（拼音可以，符号不行）' }
+  return { ok: true, key: raw }
+}
+
+/**
  * 归一化 IP：双栈 socket 会给 `::ffff:192.168.1.7`，去掉前缀才好比较、好显示。
  * 非法字符串返回空串（调用方据此跳过）。
  */
@@ -77,6 +102,8 @@ const DEFAULT_STATE = {
   port: DEFAULT_PORT,
   blacklistEnabled: false,
   blockedIps: [],
+  publicAccess: false,
+  accessKey: '',
   updatedAt: null,
   updatedBy: null,
 }
@@ -98,11 +125,14 @@ const readState = () => {
   try {
     const raw = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'))
     const parsed = validatePort(raw?.port)
+    const key = validateKey(raw?.accessKey)
     return {
       lanAccess: raw?.lanAccess === true,
       port: parsed.ok ? parsed.port : DEFAULT_PORT,
       blacklistEnabled: raw?.blacklistEnabled === true,
       blockedIps: sanitizeBlocked(raw?.blockedIps),
+      publicAccess: raw?.publicAccess === true && key.ok,
+      accessKey: key.ok ? key.key : '',
       updatedAt: typeof raw?.updatedAt === 'string' ? raw.updatedAt : null,
       updatedBy: typeof raw?.updatedBy === 'string' ? raw.updatedBy : null,
     }
@@ -162,14 +192,43 @@ export const onLanChange = (listener) => {
   return () => { listeners.delete(listener) }
 }
 
-/** 改开关：写盘 → 通知监听者。`by` 只用于记录是谁动的（settings / command / cli）。 */
-export const setLanAccess = (enabled, by = 'unknown') => commit({ lanAccess: enabled === true }, by)
+/**
+ * 改总开关：写盘 → 通知监听者。`by` 只用于记录是谁动的（settings / command / cli）。
+ * 关掉总开关时顺带把公网访问也关掉——端口都不朝外听了，留着公网开关只会让人误会。
+ */
+export const setLanAccess = (enabled, by = 'unknown') => (
+  enabled === true ? commit({ lanAccess: true }, by) : commit({ lanAccess: false, publicAccess: false }, by)
+)
 
 /** 改端口：校验 → 写盘 → 通知监听者（调用方负责确认端口没被占用）。 */
 export const setPort = (value, by = 'unknown') => {
   const parsed = validatePort(value)
   if (!parsed.ok) throw new Error(parsed.error)
   return commit({ port: parsed.port }, by)
+}
+
+/** 设访问密钥：校验 → 写盘。返回状态。 */
+export const setAccessKey = (value, by = 'unknown') => {
+  const parsed = validateKey(value)
+  if (!parsed.ok) throw new Error(parsed.error)
+  return commit({ accessKey: parsed.key }, by)
+}
+
+/**
+ * 公网开关：打开必须先有合法密钥（可以同一次一起给）。
+ * 关掉只表示「不再放行公网」，总开关与局域网访问不受影响。
+ */
+export const setPublicAccess = (enabled, value, by = 'unknown') => {
+  if (enabled === true) {
+    // 总开关没开时端口只绑 127.0.0.1，公网根本进不来：与其让人以为「开了公网」，不如直接拒绝
+    if (state.lanAccess !== true) {
+      throw new Error('请先开启「局域网访问」总开关：端口朝外监听由它管，公网开关只决定要不要校验密钥。')
+    }
+    const parsed = value === undefined ? (state.accessKey !== '' ? { ok: true, key: state.accessKey } : validateKey('')) : validateKey(value)
+    if (!parsed.ok) throw new Error(parsed.error)
+    return commit({ publicAccess: true, accessKey: parsed.key }, by)
+  }
+  return commit({ publicAccess: false }, by)
 }
 
 /** 黑名单总开关。关掉时不拦任何人，但名单保留，下次打开继续生效。 */
@@ -217,6 +276,8 @@ export const resetConfig = (by = 'unknown') => commit({
   port: DEFAULT_PORT,
   blacklistEnabled: false,
   blockedIps: [],
+  publicAccess: false,
+  accessKey: '',
 }, by)
 
 /** 盯住状态文件：命令行脚本 / 手动改 json 也能触发重建监听。 */
@@ -230,6 +291,8 @@ const startWatch = () => {
         && next.port === state.port
         && next.blacklistEnabled === state.blacklistEnabled
         && next.blockedIps.join(',') === state.blockedIps.join(',')
+        && next.publicAccess === state.publicAccess
+        && next.accessKey === state.accessKey
       if (same) return
       state = next
       notify()
@@ -252,6 +315,13 @@ export const describeLanState = (port) => {
     blacklistEnabled: current.blacklistEnabled,
     blockedIps: current.blockedIps,
     blockedCount: current.blockedIps.length,
+    publicAccess: current.publicAccess,
+    hasKey: current.accessKey !== '',
+    // 打开公网时把「该用哪条地址」直接给出去，省得用户自己拼
+    accessPath: current.publicAccess && current.accessKey !== '' ? '/' + current.accessKey : '',
+    keyHint: current.accessKey === '' ? '' : current.accessKey.slice(0, 2) + '***' + current.accessKey.slice(-1),
+    minKeyLength: MIN_KEY_LENGTH,
+    warningPublic: PUBLIC_WARNING_TEXT,
     stateFile: STATE_FILE,
   }
 }
