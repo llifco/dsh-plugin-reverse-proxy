@@ -95,6 +95,29 @@ window.__ModuleLoader__.load({
 			'不需要 Token、不需要登录，等于把整台机器的控制权交给同一网段的所有人。',
 			'只在你信任当前 Wi-Fi / 局域网（比如家里、自己手机的热点）时才开启。'
 		];
+		const IPV6_WARNING_TITLE = '开启 IPv6 监听？';
+		const IPV6_WARNING_LINES = [
+			'开启后除了 IPv4，还会多绑一条 [::]:端口，同网络里走 IPv6 的设备也能直接进入 DSH 后台。',
+			'很多宽带的 IPv6 本来就没有 NAT：只要路由器放行、地址被扫到，外面的设备也可能连进来。',
+			'公网访问开着时，IPv6 同样要过访问密钥；不确定就先别开。'
+		];
+		// 按钮点一下就能得到一串随机密钥：小写字母 + 数字，12 位，远高于最少 5 位
+		const randomKey = () => {
+			const alphabet = 'abcdefghijkmnpqrstuvwxyz23456789';
+			let out = '';
+			try {
+				const buf = new Uint8Array(12);
+				(globalThis.crypto || {}).getRandomValues ? globalThis.crypto.getRandomValues(buf) : null;
+				for (let i = 0; i < buf.length; i += 1) {
+					out += buf[i] ? alphabet[buf[i] % alphabet.length] : alphabet[(Date.now() + i) % alphabet.length];
+				}
+			} catch (e) { out = ''; }
+			if (out.length !== 12) {
+				out = '';
+				for (let i = 0; i < 12; i += 1) out += alphabet[Math.floor(Math.random() * alphabet.length)];
+			}
+			return out;
+		};
 		const STYLE = [
 			'.reproxy-lan{display:flex;flex-direction:column;gap:14px;padding:4px 0}',
 			'.reproxy-lan-row{display:flex;align-items:center;justify-content:space-between;gap:16px;border:1px solid var(--dsw-alias-border-l1,#333947);border-radius:10px;padding:14px 16px}',
@@ -110,6 +133,9 @@ window.__ModuleLoader__.load({
 			'.reproxy-lan-port{flex:none;display:flex;align-items:center;gap:10px}',
 			'.reproxy-lan-input{width:96px;padding:7px 10px;border-radius:8px;border:1px solid var(--dsw-alias-border-l1,#3a3f4b);background:rgba(0,0,0,.22);color:var(--dsw-alias-label-primary,#e6e8ee);font-size:13px;font-variant-numeric:tabular-nums;text-align:center}',
 			'.reproxy-lan-input:focus{outline:none;border-color:#8b5cf6}',
+			'.reproxy-lan-random{border-radius:8px;padding:7px 12px;font-size:13px;cursor:pointer;border:1px solid rgba(139,92,246,.55);background:rgba(139,92,246,.16);color:#c4b5fd;margin-right:8px;flex:none}',
+			'.reproxy-lan-random:hover{background:rgba(139,92,246,.26)}',
+			'.reproxy-lan-random[disabled]{opacity:.55;cursor:default}',
 			'.reproxy-lan-save{border-radius:8px;padding:7px 14px;font-size:13px;cursor:pointer;border:1px solid transparent;background:#8b5cf6;color:#fff}',
 			'.reproxy-lan-save:hover{background:#9b71f8}',
 			'.reproxy-lan-save[disabled]{opacity:.5;cursor:default}',
@@ -177,6 +203,11 @@ window.__ModuleLoader__.load({
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ enabled, key, confirm: true })
 			}).then((r) => r.json());
+			const writeIpv6 = (enabled) => fetch('/reproxy-lan/ipv6', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ enabled, confirm: true })
+			}).then((r) => r.json());
 			const writeKey = (key) => fetch('/reproxy-lan/key', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
@@ -200,6 +231,10 @@ window.__ModuleLoader__.load({
 				const [pubBusy, setPubBusy] = React.useState(false);
 				const [pubMsg, setPubMsg] = React.useState('');
 				const [pubBad, setPubBad] = React.useState(false);
+				const [askV6, setAskV6] = React.useState(false);
+				const [v6Busy, setV6Busy] = React.useState(false);
+				const [v6Msg, setV6Msg] = React.useState('');
+				const [v6Bad, setV6Bad] = React.useState(false);
 				React.useEffect(() => {
 					let alive = true;
 					readState().then((body) => {
@@ -266,6 +301,18 @@ window.__ModuleLoader__.load({
 						if (key !== '') setKeyDraft('');
 						setPubMsg(enabled ? '公网访问已开启，用下面那条地址访问' : '公网访问已关闭');
 					}).catch((e) => fail(String((e && e.message) || e))).then(() => setPubBusy(false));
+				};
+				const applyV6 = (enabled) => {
+					setV6Busy(true);
+					setV6Msg('');
+					setV6Bad(false);
+					writeIpv6(enabled).then((body) => {
+						const stateShaped = body && typeof body.ipv6 === 'boolean';
+						if (!body || (body.ok !== true && !stateShaped)) throw new Error((body && body.error) || '保存失败');
+						setState(body);
+						setAskV6(false);
+						setV6Msg(enabled ? 'IPv6 监听已开启，正在重建监听' : 'IPv6 监听已关闭');
+					}).catch((e) => { setV6Bad(true); setV6Msg(String((e && e.message) || e)); }).then(() => setV6Busy(false));
 				};
 				const applyBlock = (ip) => {
 					setIpBusy(ip);
@@ -350,6 +397,24 @@ window.__ModuleLoader__.load({
 					),
 					h('div', { className: 'reproxy-lan-row' },
 						h('div', null,
+							h('div', { className: 'reproxy-lan-title' }, 'IPv6 监听（默认关闭）'),
+							h('div', { className: 'reproxy-lan-desc' }, '开启后除了 IPv4，还会多绑一条 [::]:' + port + '，走 IPv6 的设备也能进。很多宽带的 IPv6 没有 NAT，外面的设备可能直接连进来 —— 不确定就先别开。')
+						),
+						h('div', { className: 'reproxy-lan-ctl' },
+							h('span', { className: 'reproxy-lan-state' }, state !== null && state.ipv6 === true ? '已开启' : '已关闭'),
+							h('button', {
+								className: 'reproxy-lan-switch' + (state && state.ipv6 === true ? ' on' : ''),
+								type: 'button',
+								'aria-pressed': state && state.ipv6 === true ? 'true' : 'false',
+								disabled: v6Busy || state === null || !on,
+								title: !on ? '先打开上面的「局域网访问」总开关' : (state && state.ipv6 === true ? '点击关闭 IPv6 监听' : '点击开启 IPv6 监听（会先弹出安全提示）'),
+								onClick: () => setAskV6(true)
+							}, h('i'))
+						)
+					),
+					v6Msg === '' ? null : h('div', { className: v6Bad ? 'reproxy-lan-err' : 'reproxy-lan-ok' }, v6Msg),
+					h('div', { className: 'reproxy-lan-row' },
+						h('div', null,
 							h('div', { className: 'reproxy-lan-title' }, '监听端口'),
 							h('div', { className: 'reproxy-lan-desc' }, '默认 8080。改完点「保存」立即生效，不用重启 dsh，重启后也会保留。允许 1024–65535，不能占用 3080。')
 						),
@@ -378,6 +443,13 @@ window.__ModuleLoader__.load({
 							h('div', { className: 'reproxy-lan-desc' }, '默认只放行局域网地址，公网 IP 会被拦下（403）。要允许公网访问，请开启这个开关并填写访问密钥——开启后访问地址会变成 http://<公网IP>:' + port + '/<访问密钥>，不知道密钥的人打开只会看到 404。'),
 							state && state.publicAccess ? h('div', { className: 'reproxy-lan-meta', style: { marginTop: '10px' } }, '当前访问地址：http://<公网IP>:' + port + (state.accessPath || '/<访问密钥>')) : null,
 							h('div', { className: 'reproxy-lan-port', style: { marginTop: '12px' } },
+								h('button', {
+									className: 'reproxy-lan-random',
+									type: 'button',
+									title: '生成一个 12 位随机访问密钥',
+									disabled: pubBusy || state === null,
+									onClick: () => { setKeyDraft(randomKey()); setPubMsg(''); setPubBad(false); }
+								}, '随机'),
 								h('input', {
 									className: 'reproxy-lan-input',
 									style: { width: '180px', textAlign: 'left' },
@@ -449,6 +521,19 @@ window.__ModuleLoader__.load({
 						'手机和电脑各开一个、或其中一个用无痕窗口，都不受影响。'
 					),
 					error ? h('div', { className: 'reproxy-lan-err' }, error) : null,
+					askV6 ? h('div', { className: 'reproxy-lan-mask' },
+						h('div', { className: 'reproxy-lan-card' },
+							h('h3', null, IPV6_WARNING_TITLE),
+							h('p', null, IPV6_WARNING_LINES[0]),
+							h('p', null, IPV6_WARNING_LINES[1]),
+							h('p', null, IPV6_WARNING_LINES[2]),
+							h('p', null, h('strong', null, state && state.ipv6 === true ? '这次点击会关闭 IPv6 监听。' : '这次点击会额外绑定 [::]，确定要继续吗？')),
+							h('div', { className: 'reproxy-lan-actions' },
+								h('button', { className: 'reproxy-lan-btn', type: 'button', disabled: v6Busy, onClick: () => setAskV6(false) }, '取消'),
+								h('button', { className: 'reproxy-lan-btn primary', type: 'button', disabled: v6Busy, onClick: () => applyV6(!(state && state.ipv6 === true)) }, v6Busy ? '处理中…' : '确定')
+							)
+						)
+					) : null,
 					asking ? h('div', { className: 'reproxy-lan-mask' },
 						h('div', { className: 'reproxy-lan-card' },
 							h('h3', null, LAN_WARNING_TITLE),
