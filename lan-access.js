@@ -41,6 +41,15 @@ export const PUBLIC_WARNING_LINES = [
 export const PUBLIC_WARNING_TEXT = [PUBLIC_WARNING_TITLE, ...PUBLIC_WARNING_LINES].join('\n')
 
 /** 安全提示文案：设置页弹窗与命令行共用同一份，避免两处说法不一致。 */
+export const IPV6_WARNING_TITLE = '开启 IPv6 监听？'
+export const IPV6_WARNING_LINES = [
+  '开启后除了 IPv4，还会多绑一条 [::]:端口 —— 同一网络里走 IPv6 的设备也能直接进入 DSH 后台。',
+  '很多宽带的 IPv6 本来就没有 NAT：只要路由器放行、地址被扫到，外面的设备也可能连进来，不像 IPv4 那样「没做端口映射就进不来」。',
+  '如果同时开了公网访问，IPv6 同样要过访问密钥；只开 IPv6 不开公网时，非内网来源仍按公网规则拦下（403）。',
+  '不确定就先别开：默认关闭，只监听本机最安全。',
+]
+export const IPV6_WARNING_TEXT = [IPV6_WARNING_TITLE, ...IPV6_WARNING_LINES].join('\n')
+
 export const LAN_WARNING_TITLE = '对局域网开放访问？'
 export const LAN_WARNING_LINES = [
   '开启后，同一网络里的任何设备打开这台机器的 8080 端口，都能直接进入 DSH 后台，',
@@ -104,6 +113,7 @@ const DEFAULT_STATE = {
   blockedIps: [],
   publicAccess: false,
   accessKey: '',
+  ipv6: false,
   updatedAt: null,
   updatedBy: null,
 }
@@ -133,6 +143,8 @@ const readState = () => {
       blockedIps: sanitizeBlocked(raw?.blockedIps),
       publicAccess: raw?.publicAccess === true && key.ok,
       accessKey: key.ok ? key.key : '',
+      // IPv6 只有总开关开着时才有意义：总开关关着，端口只绑 127.0.0.1
+      ipv6: raw?.ipv6 === true && raw?.lanAccess === true,
       updatedAt: typeof raw?.updatedAt === 'string' ? raw.updatedAt : null,
       updatedBy: typeof raw?.updatedBy === 'string' ? raw.updatedBy : null,
     }
@@ -197,7 +209,7 @@ export const onLanChange = (listener) => {
  * 关掉总开关时顺带把公网访问也关掉——端口都不朝外听了，留着公网开关只会让人误会。
  */
 export const setLanAccess = (enabled, by = 'unknown') => (
-  enabled === true ? commit({ lanAccess: true }, by) : commit({ lanAccess: false, publicAccess: false }, by)
+  enabled === true ? commit({ lanAccess: true }, by) : commit({ lanAccess: false, publicAccess: false, ipv6: false }, by)
 )
 
 /** 改端口：校验 → 写盘 → 通知监听者（调用方负责确认端口没被占用）。 */
@@ -278,7 +290,16 @@ export const resetConfig = (by = 'unknown') => commit({
   blockedIps: [],
   publicAccess: false,
   accessKey: '',
+  ipv6: false,
 }, by)
+
+export const setIpv6 = (enabled, by = 'unknown') => {
+  if (enabled === true && state.lanAccess !== true) {
+    // 总开关没开时只监听 127.0.0.1，IPv6 监听没有任何意义
+    throw new Error('请先开启「局域网访问」总开关：端口朝外监听由它管，IPv6 开关只决定要不要再绑一条 [::]。')
+  }
+  return commit({ ipv6: enabled === true }, by)
+}
 
 /** 盯住状态文件：命令行脚本 / 手动改 json 也能触发重建监听。 */
 const startWatch = () => {
@@ -293,6 +314,7 @@ const startWatch = () => {
         && next.blockedIps.join(',') === state.blockedIps.join(',')
         && next.publicAccess === state.publicAccess
         && next.accessKey === state.accessKey
+        && next.ipv6 === state.ipv6
       if (same) return
       state = next
       notify()
@@ -321,7 +343,9 @@ export const describeLanState = (port) => {
     accessPath: current.publicAccess && current.accessKey !== '' ? '/' + current.accessKey : '',
     keyHint: current.accessKey === '' ? '' : current.accessKey.slice(0, 2) + '***' + current.accessKey.slice(-1),
     minKeyLength: MIN_KEY_LENGTH,
+    ipv6: current.ipv6,
     warningPublic: PUBLIC_WARNING_TEXT,
+    warningIpv6: IPV6_WARNING_TEXT,
     stateFile: STATE_FILE,
   }
 }
