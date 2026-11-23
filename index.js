@@ -28,6 +28,7 @@ import {
   effectiveListenHost,
   effectivePort,
   getLanState,
+  IPV6_WARNING_TEXT,
   LAN_WARNING_TEXT,
   MIN_KEY_LENGTH,
   PUBLIC_WARNING_TEXT,
@@ -37,6 +38,7 @@ import {
   onLanChange,
   setAccessKey,
   setBlacklistEnabled,
+  setIpv6,
   setLanAccess,
   setPublicAccess,
   setPort,
@@ -389,6 +391,40 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
     },
   }
 
+  /** IPv6 监听开关：同样要带 confirm，且总开关必须先开。 */
+  const routeIpv6 = {
+    kind: 'exact',
+    path: '/reproxy-lan/ipv6',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { ok: false, error: '只支持 POST' })
+        return
+      }
+      let body
+      try {
+        body = await readBody(req)
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+        return
+      }
+      if (body.confirm !== true) {
+        sendJson(res, 400, { ok: false, error: '缺少用户确认（confirm:true）', warning: IPV6_WARNING_TEXT })
+        return
+      }
+      if (typeof body.enabled !== 'boolean') {
+        sendJson(res, 400, { ok: false, error: 'enabled 必须是布尔值' })
+        return
+      }
+      try {
+        const next = setIpv6(body.enabled, 'settings')
+        log(body.enabled ? 'warn' : 'info', '设置页把 IPv6 监听' + (body.enabled ? '打开' : '关掉'))
+        sendJson(res, 200, { ...describeLanState(), warning: IPV6_WARNING_TEXT })
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+      }
+    },
+  }
+
   /** 公网开关：必须同时给合法密钥；缺密钥直接 400。 */
   const routePublic = {
     kind: 'exact',
@@ -416,7 +452,7 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
       try {
         const next = setPublicAccess(body.enabled, body.key, 'settings')
         log(body.enabled ? 'warn' : 'info', '设置页把公网访问' + (body.enabled ? '打开' : '关掉'))
-        sendJson(res, 200, { ...next, warning: PUBLIC_WARNING_TEXT })
+        sendJson(res, 200, { ...describeLanState(), warning: PUBLIC_WARNING_TEXT })
       } catch (e) {
         sendJson(res, 400, { ok: false, error: e.message })
       }
@@ -459,6 +495,7 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
     ctx.effect(() => webServer.register(routeBlock))
     ctx.effect(() => webServer.register(routeUnblock))
     ctx.effect(() => webServer.register(routePublic))
+    ctx.effect(() => webServer.register(routeIpv6))
     ctx.effect(() => webServer.register(routeKey))
   } else {
     log('warn', 'webServer 不可用，设置页开关接口未注册')
@@ -472,23 +509,30 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
     return
   }
 
+  const v6LineOf = (s) => (s.ipv6 === true
+    ? 'IPv6 监听：已开启（[::]:' + effectivePort() + '，走 IPv6 的设备也能进）'
+    : 'IPv6 监听：已关闭（只绑 IPv4）')
+
   const statusText = () => {
     const s = getLanState()
     const port = effectivePort()
     const head = s.lanAccess
       ? '局域网访问：已开启（监听 0.0.0.0:' + port + '，同网段设备可直接进入后台）'
       : '局域网访问：已关闭（只监听 127.0.0.1:' + port + '，只有本机能访问）'
+  const v6Line = s.ipv6
+      ? 'IPv6 监听：已开启（[::]:' + port + '，走 IPv6 的设备也能进）'
+      : 'IPv6 监听：已关闭（只绑 IPv4）'
     const when = s.updatedAt ? '上次修改：' + s.updatedAt + '（' + (s.updatedBy || 'unknown') + '）' : '还没有改过，当前是默认值'
     const pub = s.publicAccess
       ? '公网访问：已开启（访问地址 http://<公网IP>:' + port + '/' + (s.accessKey || '') + '）'
       : '公网访问：已关闭（只有局域网内设备能访问）'
-    return [head, pub, when].join('\n')
+    return [head, v6Line, pub, when].join('\n')
   }
 
   ctx.effect(() => commands.register({
     name: 'lan',
     description: '查看或切换局域网/公网访问开关、端口与访问密钥',
-    input: { hint: 'yes | no | status | port <n> | public on <key> | public off | key <key>' },
+    input: { hint: 'yes | no | status | port <n> | ipv6 on|off | public on <key> | public off | key <key>' },
     recordInput: true,
     handler: ({ rawInput }) => {
       const arg = String(rawInput || '').trim().toLowerCase()
@@ -567,6 +611,27 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
         }
         log('warn', '命令行更新了公网访问密钥')
         return { kind: 'success', text: '密钥已更新。\n' + statusText() }
+      }
+      if (arg.indexOf('ipv6') === 0) {
+        const value = arg.slice(4).trim().toLowerCase()
+        const state = getLanState()
+        if (value === '') {
+          return { kind: 'success', text: v6LineOf(state) + '\n\n用法：/lan ipv6 on 开启、/lan ipv6 off 关闭' }
+        }
+        if (value !== 'on' && value !== 'off') {
+          return { kind: 'error', text: '用法：/lan ipv6 on | off' }
+        }
+        const want = value === 'on'
+        if (want === (state.ipv6 === true)) {
+          return { kind: 'success', text: '已经是' + (want ? '开启' : '关闭') + '状态了。\n' + statusText() }
+        }
+        try {
+          setIpv6(want, 'command')
+        } catch (e) {
+          return { kind: 'error', text: e.message }
+        }
+        log(want ? 'warn' : 'info', '命令行把 IPv6 监听' + (want ? '打开' : '关掉'))
+        return { kind: 'success', text: (want ? IPV6_WARNING_TEXT + '\n\n已开启 IPv6 监听，正在重建监听。' : 'IPv6 监听已关闭。') + '\n' + statusText() }
       }
       if (arg === 'reset') {
         return {
@@ -937,16 +1002,19 @@ function applyProxy(ctx, config) {
   // 记住「当前真正在监听」的地址：公网开关/密钥变化不该触发重建监听
   let appliedHost = ''
   let appliedPort = 0
+  let appliedV6 = null
 
   const startHosts = () => {
     // 端口可能在运行期被改过：每次重建监听都从状态文件取一次
     cfg.listenPort = effectivePort()
     const host = cfg.listenHost = effectiveListenHost()
+    const wantV6 = getLanState().ipv6 === true
     appliedHost = host
     appliedPort = cfg.listenPort
+    appliedV6 = wantV6
     start(host)
     // IPv6 用 ipv6Only，否则 Linux 双栈会把 0.0.0.0 占的端口算作冲突
-    if (cfg.listenIpv6 && host === '0.0.0.0') {
+    if (wantV6 && host === '0.0.0.0') {
       try { start('::') } catch (e) { log('info', 'IPv6 监听跳过: ' + (e && e.message)) }
     }
     if (getLanState().lanAccess) {
@@ -968,7 +1036,8 @@ function applyProxy(ctx, config) {
       // 公网开关、访问密钥、黑名单这些只影响请求判定，重建反而会让正在用的连接断掉
       const host = effectiveListenHost()
       const port = effectivePort()
-      if (host === appliedHost && port === appliedPort) return
+      const v6 = getLanState().ipv6 === true
+      if (host === appliedHost && port === appliedPort && v6 === appliedV6) return
       rebind()
     })
   } catch { /* 订阅失败不连坐 */ }
