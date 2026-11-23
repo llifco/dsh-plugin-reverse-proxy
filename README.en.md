@@ -209,6 +209,23 @@ Replaces the official `@deepseek-ai/dsh-client-connection` provider and skips Br
 
 ---
 
+## Why the marketplace marks "executes assembled code at runtime"
+
+The marketplace detail page scans every package statically (the "What it does" block), and ours lights up `Execution → runs code assembled at runtime`. It is accurate, but the reason is mundane: the bundle contains four `eval` / `new Function` sites.
+
+| Where | Code | Origin |
+|---|---|---|
+| `vendor/skip/gate.js:125` | `new Function('ctx', 'expr', 'with (ctx) { return eval(expr) }')(ctx, GATE_PROBE_EXPRESSION)` | This plugin's own compatibility probe: `disabled:` entries in `cordis.patch.yml` are expressions, and matching one at runtime requires evaluating it — same semantics as DSH's own loader |
+| `vendor/skip/client.js:5654` | `new Function("return " + schema.callback)()` | DSH's official schemastery build, vendored as part of the official client bundle |
+| `vendor/skip/client.js:12138` | same | same |
+| `vendor/skip/client.js:13639` | same | same |
+
+In other words: **the plugin never downloads or remote-loads code**. The flag is a pattern match on "string executed as function", which is why "Network access" and "Reads/writes local files" light up too (`net` / `fs` calls).
+
+Removing the flag entirely would mean dropping the vendored official frontend — i.e. no settings panel — so we keep it and explain it here.
+
+---
+
 ## Scope
 
 | Where | Supported |
