@@ -55,7 +55,7 @@ No GUI around? The same switch works from a terminal (`yes` is required) — see
 </p>
 ---
 
-## Five capabilities
+## Six capabilities
 
 > Since 0.3.5: the settings switch is purple, and the **listening port** is editable
 > (default 8080, applied on save, kept across restarts).
@@ -154,7 +154,18 @@ in the URL. A request with no key, or the wrong key, gets a **404** — it does 
 > ⚠️ Two things to keep in mind: (1) this plugin only *allows* traffic — reaching it from the internet still depends on
 > your router / firewall port forwarding; (2) treat the key like a key — don't paste it into group chats, screenshots or issues.
 
-### 4. Access IPs and blacklist (off by default)
+### 4. IPv6 listener (off by default)
+
+Right below the main switch there is an **IPv6 listener** toggle. When enabled, the proxy binds an extra `[::]:<port>`:
+
+- Devices on the same network that use **IPv6** (most phones and many ISP links prefer IPv6) can open `http://[ipv6-address]:<port>` directly.
+- It follows the main switch: it is disabled while "LAN access" is off (the API answers 400), and turning the main switch off disables IPv6 too.
+- It follows public access as well: when public access is on, IPv6 sources must present the access key, same as IPv4.
+- A warning dialog appears first: **many ISP IPv6 links have no NAT**, so if your router lets traffic through and the address gets scanned, outside devices may reach you. Leave it off if unsure.
+
+Terminal: `reproxy-lan ipv6 on` / `reproxy-lan ipv6 off`; slash command: `/lan ipv6 on|off`.
+
+### 5. Access IPs and blacklist (off by default)
 
 - Lists every device that recently hit the port (IP, last seen, request count).
 - **Add** drops that IP into the blacklist; the device then gets a 403 page until you remove it.
@@ -171,7 +182,7 @@ reproxy-lan reset      # shows what will be restored, then asks you to type yes
 Or `/lan reset` in chat, confirmed with `/lan reset yes`. Reset turns LAN access off, port back to 8080,
 blacklist off and clears the list — devices currently connected over 8080 drop immediately, by design.
 
-### 5. Token-free login (version-gated)
+### 6. Token-free login (version-gated)
 
 Replaces the official `@deepseek-ai/dsh-client-connection` provider and skips BrowserAuth.
 
