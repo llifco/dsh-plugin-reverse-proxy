@@ -238,6 +238,23 @@ reproxy-lan reset      # 先给你看会重置什么，输入 yes 才执行
 
 ---
 
+## 关于商场扫描器标的「会在运行时执行拼出来的代码」
+
+插件商场的详情页会给每个包做静态扫描（「它会做什么」那一块），我们的包被点亮了一条 `执行 → 会在运行时执行拼出来的代码`。这是真的，但来源说清楚就不吓人了——包里有四处 `eval` / `new Function`：
+
+| 位置 | 代码 | 来源 |
+|---|---|---|
+| `vendor/skip/gate.js:125` | `new Function('ctx', 'expr', 'with (ctx) { return eval(expr) }')(ctx, GATE_PROBE_EXPRESSION)` | 本插件自己的兼容档位探测：`cordis.patch.yml` 里 `disabled:` 是表达式字符串，判断它该命中哪一档只能在运行时求值，语义与 DSH 自己的 loader 相同 |
+| `vendor/skip/client.js:5654` | `new Function("return " + schema.callback)()` | DSH 官方 schemastery 的打包产物，整套 vendor 进来的官方 client bundle |
+| `vendor/skip/client.js:12138` | 同上 | 同上 |
+| `vendor/skip/client.js:13639` | 同上 | 同上 |
+
+换句话说：**插件不会下载任何代码来跑**，也没有远程加载；被标亮是因为「字符串当函数跑」这种结构存在，扫描器按规则点亮。同一张卡上的「会联网」「会读写本机文件」也是同理（`net` / `fs` 调用）。
+
+如果想彻底不出现这条，只能不 vendor 官方前端——那设置页就没了，所以这里选择保留并说明。
+
+---
+
 ## 适用范围
 
 | 场景 | 能不能用 |
