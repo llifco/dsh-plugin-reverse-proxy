@@ -4,6 +4,15 @@
 
 ---
 
+## 0.8.3
+
+**更新内容**
+- README 新增「命令一览 / Command reference」表格：斜杠命令与终端命令一一对应，补上 `reproxy-lan addresses`（含 `urls` / `addr` / `a` 别名）、`ipv6 on|off`、`public on`（自动随机密钥）、`public off`（只关开关）、`reset`。
+- 终端代码块补全到 11 条命令，每条带一句注释。
+- 代码与 0.8.0 完全一致，纯文档。
+
+---
+
 ## 0.8.2
 
 **更新内容**
