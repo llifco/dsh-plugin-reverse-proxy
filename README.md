@@ -37,7 +37,11 @@ dsh plugin --profile web add dsh-plugin-reverse-proxy   # 推荐：npm 包，免
 **设置 → 局域网访问**（0.8.0 一页搞定）：局域网访问总开关、IPv6 监听、监听端口、公网访问与密钥（带「随机」按钮）、**外部访问地址**（内网/公网 IPv4+IPv6 各一行，实时端口、一键复制）、访问 IP 与黑名单（每行带「公网 / 内网」标签，卡片内滚动）。点开关会先弹一次安全确认：
 
 <p align="center">
-  <img src="assets/settings-lan-access.jpg" width="620" alt="设置 · 局域网访问">
+  <img src="assets/settings-lan-access.jpg" width="560" alt="设置 · 局域网访问（总开关 / IPv6 监听 / 监听端口 / 公网访问与密钥）">
+</p>
+
+<p align="center">
+  <img src="assets/settings-addresses.jpg" width="560" alt="设置 · 外部访问地址与访问 IP">
 </p>
 
 点「添加」把设备拉黑，它再打开后台只会看到 403：
