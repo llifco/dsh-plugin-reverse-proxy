@@ -18,7 +18,10 @@
 
 import crypto from 'node:crypto'
 import http from 'node:http'
+import https from 'node:https'
 import net from 'node:net'
+import os from 'node:os'
+import { execFileSync } from 'node:child_process'
 import zlib from 'node:zlib'
 import { apply as applyTrustedConnection } from './vendor/skip/host.js'
 import {
@@ -134,6 +137,60 @@ function isImmutableAsset(url) {
  * 两边都改同一份 lan-access 状态文件，所以永远同步；改完立刻重建监听。
  */
 /** 内网/本机地址判定：总开关开着但没开公网时，只放行这些来源。 */
+/** 虚拟网卡 / 容器的名字：这些地址对「别人怎么访问这台机器」没有意义，直接跳过。 */
+const VIRTUAL_IFACE = /^(lo|docker|veth|br-|virbr|vmnet|vboxnet|tun|tap|wg|tailscale|zt|utun|ip6tnl|sit|dummy|cni|flannel|kube|lxc|podman|ham)/i
+
+/** 读 `ip -6 addr` 的 valid_lft，用来挑「活得最久」的那条 IPv6。失败就返回空表。 */
+function ipv6Lifetimes() {
+  const map = new Map()
+  try {
+    const out = execFileSync('ip', ['-6', 'addr', 'show', 'scope', 'global'], {
+      encoding: 'utf8', timeout: 1500, stdio: ['ignore', 'pipe', 'ignore'],
+    })
+    let current = ''
+    for (const line of out.split('\n')) {
+      const a = line.match(/inet6\s+([0-9a-fA-F:]+)\/\d+/)
+      if (a) { current = a[1].toLowerCase(); continue }
+      const v = line.match(/valid_lft\s+(\d+)sec/)
+      if (v && current) { map.set(current, Number(v[1])); current = '' }
+    }
+  } catch { /* 没有 ip 命令就退化为主序 */ }
+  return map
+}
+
+/** 收集「这台机器真正的」访问地址：跳过回环、虚拟网卡、链路本地。 */
+export function collectAddresses() {
+  const lifetimes = ipv6Lifetimes()
+  const lan4 = []
+  const lan6 = []
+  const wan6 = []
+  const ifaces = os.networkInterfaces()
+  for (const [name, list] of Object.entries(ifaces)) {
+    if (!list || VIRTUAL_IFACE.test(name)) continue
+    for (const item of list) {
+      if (item.internal) continue
+      const addr = normalizeIp(item.address)
+      if (addr === '') continue
+      if (net.isIPv4(addr)) {
+        if (!isPrivateIp(addr)) continue // 只认内网 IPv4，公网 IPv4 由出口探测拿
+        lan4.push({ address: addr, iface: name, lifetime: 0 })
+        continue
+      }
+      const lower = addr.toLowerCase()
+      if (lower.startsWith('fe8') || lower.startsWith('fe9') || lower.startsWith('fea') || lower.startsWith('feb')) continue // 链路本地
+      if (lower === '::1') continue
+      const lifetime = lifetimes.get(lower) ?? 0
+      if (lower.startsWith('fc') || lower.startsWith('fd')) {
+        lan6.push({ address: addr, iface: name, lifetime })
+      } else {
+        wan6.push({ address: addr, iface: name, lifetime }) // 2000::/3 全局
+      }
+    }
+  }
+  const byLife = (a, b) => b.lifetime - a.lifetime
+  return { lan4: lan4.sort(byLife), lan6: lan6.sort(byLife), wan6: wan6.sort(byLife) }
+}
+
 export function isPrivateIp(value) {
   const ip = normalizeIp(value)
   if (ip === '') return false
@@ -153,6 +210,33 @@ export function isPrivateIp(value) {
   if (a === 192 && b === 168) return true
   if (a === 169 && b === 254) return true // 链路本地
   return false
+}
+
+/** 探测出口公网 IPv4（拿不到就返回 null）。结果缓存 10 分钟，别每次开设置页都去求一次。 */
+let wan4Cache = { at: 0, value: null }
+export async function probeWan4({ force = false } = {}) {
+  const now = Date.now()
+  if (!force && now - wan4Cache.at < 600000) return wan4Cache.value
+  const value = await new Promise((resolve) => {
+    let settled = false
+    const done = (v) => { if (!settled) { settled = true; resolve(v) } }
+    try {
+      const req = https.get('https://api.ipify.org?format=text', (res) => {
+        if (res.statusCode !== 200) { res.resume(); return done(null) }
+        let body = ''
+        res.setEncoding('utf8')
+        res.on('data', (chunk) => { if (body.length < 64) body += chunk })
+        res.on('end', () => {
+          const ip = normalizeIp(body.trim())
+          done(net.isIPv4(ip) ? ip : null)
+        })
+      })
+      req.setTimeout(2500, () => { req.destroy(); done(null) })
+      req.on('error', () => done(null))
+    } catch { done(null) }
+  })
+  wan4Cache = { at: now, value }
+  return value
 }
 
 function registerLanControl(ctx, cfg, log, extra = {}) {
@@ -425,6 +509,54 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
     },
   }
 
+/** 列出这台机器对外的可访问地址（内网/公网、IPv4/IPv6），端口用实时值。 */
+  const routeAddresses = {
+    kind: 'exact',
+    path: '/reproxy-lan/addresses',
+    handler: async (req, res) => {
+      if (req.method !== 'GET') {
+        sendJson(res, 405, { ok: false, error: '只支持 GET' })
+        return
+      }
+      const st = getLanState()
+      const port = effectivePort()
+      const key = st.publicAccess === true && typeof st.accessKey === 'string' ? st.accessKey : ''
+      const base = (host, isV6) => 'http://' + (isV6 ? '[' + host + ']' : host) + ':' + port
+      const picked = collectAddresses()
+      const lan4 = picked.lan4[0]
+      const lan6 = picked.lan6[0]
+      const wan6 = picked.wan6[0]
+      const rows = []
+
+      rows.push(lan4
+        ? { id: 'lan4', label: '内网 IPv4', url: base(lan4.address, false) + '/' }
+        : { id: 'lan4', label: '内网 IPv4', url: '', hint: '没检测到内网 IPv4（网线/Wi-Fi 断了吗？）' })
+
+      if (st.ipv6 === true) {
+        rows.push(lan6
+          ? { id: 'lan6', label: '内网 IPv6', url: base(lan6.address, true) + '/', lifetime: lan6.lifetime }
+          : { id: 'lan6', label: '内网 IPv6', url: '', hint: '没检测到内网 IPv6 地址' })
+      } else {
+        rows.push({ id: 'lan6', label: '内网 IPv6', url: '', hint: 'IPv6 监听没开——打开上面的「IPv6 监听」后这里才会列出来。' })
+      }
+
+      if (st.publicAccess === true) {
+        const wan4 = await probeWan4()
+        rows.push(wan4
+          ? { id: 'wan4', label: '公网 IPv4', url: base(wan4, false) + '/' + encodeURIComponent(key) }
+          : { id: 'wan4', label: '公网 IPv4', url: '', hint: '没取到公网 IPv4（多半在运营商 NAT / CGNAT 后面）。先在路由器做端口映射，或者改用 IPv6。' })
+        rows.push(wan6
+          ? { id: 'wan6', label: '公网 IPv6', url: base(wan6.address, true) + '/' + encodeURIComponent(key), lifetime: wan6.lifetime }
+          : { id: 'wan6', label: '公网 IPv6', url: '', hint: '这台机器没有公网 IPv6（只有内网 IPv6）。' })
+      } else {
+        rows.push({ id: 'wan4', label: '公网 IPv4', url: '', hint: '公网访问没开。打开「公网访问」并设好密钥后，这里会出现带密钥的完整地址。' })
+        rows.push({ id: 'wan6', label: '公网 IPv6', url: '', hint: '公网访问没开。' })
+      }
+
+      sendJson(res, 200, { ok: true, port, ipv6: st.ipv6 === true, publicAccess: st.publicAccess === true, rows })
+    },
+  }
+
   /** 公网开关：必须同时给合法密钥；缺密钥直接 400。 */
   const routePublic = {
     kind: 'exact',
@@ -497,6 +629,7 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
     ctx.effect(() => webServer.register(routePublic))
     ctx.effect(() => webServer.register(routeIpv6))
     ctx.effect(() => webServer.register(routeKey))
+    ctx.effect(() => webServer.register(routeAddresses))
   } else {
     log('warn', 'webServer 不可用，设置页开关接口未注册')
   }
