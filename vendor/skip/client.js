@@ -145,13 +145,19 @@ window.__ModuleLoader__.load({
 			'.reproxy-lan-note{margin-top:10px;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.75;color:var(--dsw-alias-label-secondary,#9aa0ad);background:rgba(255,255,255,.04);border:1px solid var(--dsw-alias-border-l1,#333947)}',
 			'.reproxy-lan-note b{color:var(--dsw-alias-label-primary,#e8ebf2);font-weight:600}',
 			'.reproxy-lan-err{font-size:12px;color:#ff6b6b}',
-			'.reproxy-lan-scroll{margin-top:10px;max-height:212px;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;gap:6px;padding:8px;border-radius:10px;border:1px solid var(--dsw-alias-border-l1,#333947);background:rgba(0,0,0,.16);overscroll-behavior:contain}',
+			'.reproxy-lan-scroll{margin-top:10px;max-height:212px;overflow-y:auto;overflow-x:hidden;display:block;padding:8px;border-radius:10px;border:1px solid var(--dsw-alias-border-l1,#333947);background:rgba(0,0,0,.16);overscroll-behavior:contain;-webkit-overflow-scrolling:touch;touch-action:pan-y;scrollbar-width:thin}',
+			'.reproxy-lan-scroll>*{flex:0 0 auto}',
+			'.reproxy-lan-scroll .reproxy-lan-row+.reproxy-lan-row{margin-top:6px}',
+			'.reproxy-lan-scroll.reproxy-lan-chips{display:flex;flex-direction:row;flex-wrap:wrap;gap:6px;max-height:104px}',
 			'.reproxy-lan-scroll::-webkit-scrollbar{width:8px}',
 			'.reproxy-lan-scroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,.16);border-radius:999px}',
 			'.reproxy-lan-group{display:flex;flex-direction:column;gap:6px}',
 			'.reproxy-lan-grouphead{display:flex;align-items:center;gap:8px;margin:2px 0 2px}',
 			'.reproxy-lan-badge{flex:none;font-size:11px;line-height:1;padding:4px 8px;border-radius:999px;border:1px solid rgba(139,92,246,.5);color:#c4b5fd;background:rgba(139,92,246,.12)}',
 			'.reproxy-lan-badge.lan{border-color:rgba(94,224,138,.45);color:#8fe6b0;background:rgba(94,224,138,.1)}',
+			'.reproxy-lan-addr{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px;padding:4px 0}',
+			'.reproxy-lan-url{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;color:var(--dsw-alias-label-primary,#e6e8ee);word-break:break-all}',
+			'.reproxy-lan-url.lan{color:#8fe6b0}',
 			'.reproxy-lan-empty{font-size:12px;color:var(--dsw-alias-label-secondary,#8b90a0);padding:2px 0 6px}',
 			'.reproxy-lan-ip{display:flex;align-items:center;gap:10px;font-size:13px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-primary,#e6e8ee);padding:2px 0}',
 			'.reproxy-lan-list{margin-top:10px;display:flex;flex-direction:column;gap:6px}',
@@ -208,6 +214,7 @@ window.__ModuleLoader__.load({
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ enabled, confirm: true })
 			}).then((r) => r.json());
+			const readAddresses = () => fetch('/reproxy-lan/addresses', { headers: { accept: 'application/json' }, cache: 'no-store' }).then((r) => r.json());
 			const writeKey = (key) => fetch('/reproxy-lan/key', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
@@ -235,6 +242,8 @@ window.__ModuleLoader__.load({
 				const [v6Busy, setV6Busy] = React.useState(false);
 				const [v6Msg, setV6Msg] = React.useState('');
 				const [v6Bad, setV6Bad] = React.useState(false);
+				const [addresses, setAddresses] = React.useState([]);
+				const [copied, setCopied] = React.useState('');
 				React.useEffect(() => {
 					let alive = true;
 					readState().then((body) => {
@@ -244,7 +253,44 @@ window.__ModuleLoader__.load({
 					}).catch((e) => { if (alive) setError(String((e && e.message) || e)); });
 					return () => { alive = false; };
 				}, []);
-				// 访问 IP 列表：进面板先拉一次，之后每 5 秒轻量刷新（只读，不写盘）
+				// 外部访问地址：进面板先拉一次，之后每 8 秒刷（端口/开关一变就会跟着变）
+				React.useEffect(() => {
+					let alive = true;
+					const load = () => readAddresses().then((body) => {
+						if (!alive || !body || body.ok !== true) return;
+						setAddresses(Array.isArray(body.rows) ? body.rows : []);
+					}).catch(() => { /* 拉不到就保持上一份 */ });
+					load();
+					const timer = setInterval(load, 8000);
+					return () => { alive = false; clearInterval(timer); };
+				}, [state && state.port, state && state.ipv6, state && state.publicAccess]);
+				const copyRow = (row) => {
+					const text = String(row.url || '');
+					const ok = () => { setCopied(row.id); setTimeout(() => setCopied(''), 1600); };
+					const bad = () => { setCopied('fail'); setTimeout(() => setCopied(''), 2600); };
+					const manual = () => {
+						try {
+							const ta = document.createElement('textarea');
+							ta.value = text;
+							ta.setAttribute('readonly', 'readonly');
+							ta.style.position = 'fixed';
+							ta.style.top = '-1000px';
+							ta.style.opacity = '0';
+							document.body.appendChild(ta);
+							ta.select();
+							ta.setSelectionRange(0, text.length);
+							const done = document.execCommand('copy');
+							document.body.removeChild(ta);
+							if (done) ok(); else bad();
+						} catch (e) { bad(); }
+					};
+					if (navigator.clipboard && navigator.clipboard.writeText) {
+						navigator.clipboard.writeText(text).then(ok).catch(manual);
+					} else {
+						manual();
+					}
+				};
+								// 访问 IP 列表：进面板先拉一次，之后每 5 秒轻量刷新（只读，不写盘）
 				React.useEffect(() => {
 					let alive = true;
 					const load = () => readClients().then((body) => {
@@ -480,6 +526,27 @@ window.__ModuleLoader__.load({
 							),
 							on ? null : h('div', { className: 'reproxy-lan-meta', style: { marginTop: '6px' } }, '总开关关着时端口只监听 127.0.0.1，公网开关点不动 —— 先打开上面的「局域网访问」。'),
 							pubMsg === '' ? null : h('div', { className: pubBad ? 'reproxy-lan-err' : 'reproxy-lan-ok', style: { marginTop: '8px' } }, pubMsg)
+						)
+					),
+					h('div', { className: 'reproxy-lan-row' },
+						h('div', { style: { width: '100%', minWidth: 0 } },
+							h('div', { className: 'reproxy-lan-title' }, '外部访问地址'),
+							h('div', { className: 'reproxy-lan-desc' }, '这台机器现在能怎么访问进来：内网/公网、IPv4/IPv6 各一条，端口按你设的实时值拼，开关一改就跟着变。点「复制」拿走整条地址。'),
+							h('div', { className: 'reproxy-lan-list', style: { marginTop: '10px' } },
+								addresses.length === 0
+									? h('div', { className: 'reproxy-lan-meta' }, '正在读取地址…')
+									: addresses.map((row) => h('div', { className: 'reproxy-lan-addr', key: row.id },
+										h('span', { className: 'reproxy-lan-badge' + (String(row.id).indexOf('lan') === 0 ? ' lan' : '') }, row.label),
+										row.url
+											? h('code', { className: 'reproxy-lan-url' + (String(row.id).indexOf('lan') === 0 ? ' lan' : '') }, row.url)
+											: h('span', { className: 'reproxy-lan-empty', style: { flex: '1 1 100%' } }, row.hint || '没有可用地址'),
+										row.url
+											? h('button', { className: 'reproxy-lan-add', type: 'button', onClick: () => copyRow(row) }, copied === row.id ? '已复制' : '复制')
+											: null
+									))
+							),
+							h('div', { className: 'reproxy-lan-meta', style: { marginTop: '8px' } }, '如果点「复制」没反应，请长按上面的地址手动复制。'),
+							copied === 'fail' ? h('div', { className: 'reproxy-lan-err', style: { marginTop: '6px' } }, '浏览器不让复制，请长按地址手动复制。') : null
 						)
 					),
 					h('div', { className: 'reproxy-lan-row' },
