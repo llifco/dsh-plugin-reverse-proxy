@@ -55,7 +55,7 @@ No GUI around? The same switch works from a terminal (`yes` is required) — see
 </p>
 ---
 
-## Six capabilities
+## Seven capabilities
 
 > Since 0.3.5: the settings switch is purple, and the **listening port** is editable
 > (default 8080, applied on save, kept across restarts).
@@ -136,7 +136,7 @@ To open it to the internet, add a second gate — **public switch + access key**
 - Settings: **Settings → LAN access → Public access**, type an access key (5–64 characters, letters and digits only;
   pinyin is fine, symbols are not), then hit **Save and enable**. The switch will not turn on without a key.
 - Slash command: `/lan public` (status), `/lan public on <key>`, `/lan public off`, `/lan key <key>`.
-- Terminal: `reproxy-lan public on <key>`, `reproxy-lan public off`, `reproxy-lan key <key>`; `status` shows the masked key.
+- Terminal: `reproxy-lan public on` (shows the warning, asks for `yes`, then **generates a random 12-character key**, opens the main + public switches and prints the reachable URLs), `reproxy-lan public on <key>`, `reproxy-lan public off` (closes the public switch only, key kept), `reproxy-lan key <key>`, `reproxy-lan addresses` (list every reachable URL at any time); `status` shows the masked key.
 
 The URL becomes:
 
@@ -165,7 +165,17 @@ Right below the main switch there is an **IPv6 listener** toggle. When enabled, 
 
 Terminal: `reproxy-lan ipv6 on` / `reproxy-lan ipv6 off`; slash command: `/lan ipv6 on|off`.
 
-### 5. Access IPs and blacklist (off by default)
+### 5. External addresses (one glance, ready to copy)
+
+Below "Public access" there is an **External addresses** card that works out how this machine can be reached right now:
+
+- One row each for **LAN IPv4 / LAN IPv6 / public IPv4 / public IPv6**, built with the port you actually configured (change the port and the rows follow immediately).
+- When public access is on, the public rows include the access key, so they are complete URLs you can paste straight into a browser; when it is off you get a hint instead of a dead link.
+- Missing public addresses are explained per row: IPv4 is usually carrier NAT / CGNAT ("forward the port on your router first"), IPv6 means "this machine only has a LAN IPv6".
+- Only real interfaces are listed: `lo`, docker, veth, bridges, tun/tap, WireGuard, Tailscale and container subnets are skipped, and the IPv6 row picks the address with the **longest lifetime**.
+- A **Copy** button sits on each row; if copying does nothing on a phone, long-press the address — the card says so too.
+
+### 6. Access IPs and blacklist (off by default)
 
 - Lists every device that recently hit the port (IP, last seen, request count).
 - **Add** drops that IP into the blacklist; the device then gets a 403 page until you remove it.
@@ -182,7 +192,7 @@ reproxy-lan reset      # shows what will be restored, then asks you to type yes
 Or `/lan reset` in chat, confirmed with `/lan reset yes`. Reset turns LAN access off, port back to 8080,
 blacklist off and clears the list — devices currently connected over 8080 drop immediately, by design.
 
-### 6. Token-free login (version-gated)
+### 7. Token-free login (version-gated)
 
 Replaces the official `@deepseek-ai/dsh-client-connection` provider and skips BrowserAuth.
 
