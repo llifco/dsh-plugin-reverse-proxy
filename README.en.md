@@ -37,7 +37,11 @@ confirm — your phone can connect.
 **Settings → LAN access** (off by default; flipping it asks for confirmation first):
 
 <p align="center">
-  <img src="assets/settings-lan-access.jpg" width="620" alt="Settings · LAN access">
+  <img src="assets/settings-lan-access.jpg" width="560" alt="Settings · LAN access (main switch / IPv6 / port / public access + key)">
+</p>
+
+<p align="center">
+  <img src="assets/settings-addresses.jpg" width="560" alt="Settings · External addresses and access IPs">
 </p>
 
 No GUI around? The same switch works from a terminal (`yes` is required) — see [Usage](#usage).
