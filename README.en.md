@@ -106,6 +106,21 @@ reproxy-lan port 9000  # change the listening port (1024-65535; 3080 is DSH's ow
 
 or **Settings → 局域网访问 (LAN access)** → flip the switch → confirm the warning dialog.
 
+#### Command reference (slash commands and terminal line up one-to-one)
+
+| What you want | In chat | Over SSH |
+|---|---|---|
+| Show status | `/lan status` | `reproxy-lan status` |
+| Enable / disable LAN access | `/lan yes` / `/lan no` | `reproxy-lan enable` / `disable` |
+| Change the port | `/lan port 9000` | `reproxy-lan port 9000` |
+| Enable / disable the IPv6 listener | `/lan ipv6 on` / `off` | `reproxy-lan ipv6 on` / `off` |
+| One-shot public access (random key) | `/lan public on` | `reproxy-lan public on` |
+| Public access with your own key | `/lan public on <key>` | `reproxy-lan public on <key>` |
+| Close public access only | `/lan public off` | `reproxy-lan public off` |
+| Change the key | `/lan key <key>` | `reproxy-lan key <key>` |
+| **List every reachable address** | — | `reproxy-lan addresses` (aliases `urls` / `addr` / `a`) |
+| Restore defaults | `/lan reset yes` | `reproxy-lan reset` |
+
 Terminal example (`status` → `enable` → typing `yes` → listening on `0.0.0.0:8080`):
 
 ![reproxy-lan in a terminal](assets/lan-access-cli.jpg)
