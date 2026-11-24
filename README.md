@@ -132,12 +132,33 @@ reproxy-lan port 9000    (SSH 里)
 **③ 终端命令**（SSH 上机器）
 
 ```bash
-reproxy-lan status     # 看状态
-reproxy-lan enable     # 先打安全提示，输入 yes 才真正开启
-reproxy-lan disable    # 直接关闭
-reproxy-lan port 9000  # 改监听端口（1024–65535，不能占 3080）
+reproxy-lan status            # 看状态（局域网 / IPv6 / 公网 / 黑名单）
+reproxy-lan enable            # 先打安全提示，输入 yes 才真正开启
+reproxy-lan disable           # 直接关闭
+reproxy-lan port 9000         # 改监听端口（1024–65535，不能占 3080）
+reproxy-lan ipv6 on           # 额外绑一条 [::]:<端口>，同样要输入 yes
+reproxy-lan public on         # 一键开公网：提示 → yes → 自动生成 12 位随机密钥 → 打印访问地址
+reproxy-lan public off        # 只关公网开关（密钥保留、局域网不动）
+reproxy-lan key abc12345      # 换访问密钥（不会自动开公网）
+reproxy-lan addresses         # 列出当前所有可访问地址（内网/公网 IPv4+IPv6，公网带密钥）
+reproxy-lan reset             # 恢复默认（局域网关、端口 8080、公网关、密钥与黑名单清空）
 reproxy-lan --help
 ```
+
+#### 命令一览（斜杠命令与终端一一对应）
+
+| 想干什么 | 对话里发 | SSH 里敲 |
+|---|---|---|
+| 看状态 | `/lan status` | `reproxy-lan status` |
+| 开 / 关局域网访问 | `/lan yes` / `/lan no` | `reproxy-lan enable` / `disable` |
+| 改端口 | `/lan port 9000` | `reproxy-lan port 9000` |
+| 开 / 关 IPv6 监听 | `/lan ipv6 on` / `/lan ipv6 off` | `reproxy-lan ipv6 on` / `off` |
+| 一键开公网（自动随机密钥） | `/lan public on` | `reproxy-lan public on` |
+| 用指定密钥开公网 | `/lan public on <密钥>` | `reproxy-lan public on <密钥>` |
+| 只关公网 | `/lan public off` | `reproxy-lan public off` |
+| 换密钥 | `/lan key <密钥>` | `reproxy-lan key <密钥>` |
+| **列所有可访问地址** | — | `reproxy-lan addresses`（别名 `urls` / `addr` / `a`） |
+| 恢复默认 | `/lan reset yes` | `reproxy-lan reset` |
 
 终端示例（`status` → `enable` → 输入 `yes` 确认 → 立刻监听 `0.0.0.0:8080`）：
 
