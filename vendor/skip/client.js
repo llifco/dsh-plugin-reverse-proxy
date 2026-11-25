@@ -448,7 +448,14 @@ window.__ModuleLoader__.load({
 					h('div', { className: 'reproxy-lan-row' },
 						h('div', null,
 							h('div', { className: 'reproxy-lan-title' }, '局域网访问'),
-							h('div', { className: 'reproxy-lan-desc' }, '默认只允许这台机器自己打开 ' + port + ' 端口。开启后同一 Wi-Fi / 局域网里的任何设备都能直接进入 DSH 后台，不需要登录——请在开启前确认周围没有不可信设备。')
+							h('div', { className: 'reproxy-lan-desc' }, '默认只允许这台机器自己打开 ' + port + ' 端口。开启后同一 Wi-Fi / 局域网里的任何设备都能直接进入 DSH 后台，不需要登录——请在开启前确认周围没有不可信设备。'),
+							h('a', {
+								className: 'reproxy-lan-link',
+								style: { marginTop: '10px' },
+								href: 'https://qm.qq.com/q/X5L0ZDvCYc',
+								target: '_blank',
+								rel: 'noopener noreferrer'
+							}, '联系插件官方作者')
 						),
 						h('div', { className: 'reproxy-lan-ctl' },
 							h('span', { className: 'reproxy-lan-state' }, state === null ? '' : (on ? '已开启' : '已关闭')),
@@ -461,14 +468,6 @@ window.__ModuleLoader__.load({
 								onClick: () => setAsking(true)
 							}, h('i'))
 						)
-					),
-					h('div', { className: 'reproxy-lan-row', style: { alignItems: 'flex-start' } },
-						h('a', {
-							className: 'reproxy-lan-link',
-							href: 'https://qm.qq.com/q/X5L0ZDvCYc',
-							target: '_blank',
-							rel: 'noopener noreferrer'
-						}, '联系插件官方作者')
 					),
 					h('div', { className: 'reproxy-lan-row' },
 						h('div', null,
