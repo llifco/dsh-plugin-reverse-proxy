@@ -215,6 +215,16 @@ window.__ModuleLoader__.load({
 				body: JSON.stringify({ enabled, confirm: true })
 			}).then((r) => r.json());
 			const readAddresses = () => fetch('/reproxy-lan/addresses', { headers: { accept: 'application/json' }, cache: 'no-store' }).then((r) => r.json());
+			const writeForward = (port, remove) => fetch('/reproxy-lan/forwards', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(remove === true ? { port, remove: true } : { port })
+			}).then((r) => r.json());
+			const writeForwardsEnabled = (enabled) => fetch('/reproxy-lan/forwards/enabled', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ enabled, confirm: true })
+			}).then((r) => r.json());
 			const writeKey = (key) => fetch('/reproxy-lan/key', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
@@ -243,6 +253,10 @@ window.__ModuleLoader__.load({
 				const [v6Msg, setV6Msg] = React.useState('');
 				const [v6Bad, setV6Bad] = React.useState(false);
 				const [addresses, setAddresses] = React.useState([]);
+				const [fwdDraft, setFwdDraft] = React.useState('');
+				const [fwdBusy, setFwdBusy] = React.useState('');
+				const [fwdMsg, setFwdMsg] = React.useState('');
+				const [fwdBad, setFwdBad] = React.useState(false);
 				const [copied, setCopied] = React.useState('');
 				React.useEffect(() => {
 					let alive = true;
@@ -526,6 +540,85 @@ window.__ModuleLoader__.load({
 							),
 							on ? null : h('div', { className: 'reproxy-lan-meta', style: { marginTop: '6px' } }, '总开关关着时端口只监听 127.0.0.1，公网开关点不动 —— 先打开上面的「局域网访问」。'),
 							pubMsg === '' ? null : h('div', { className: pubBad ? 'reproxy-lan-err' : 'reproxy-lan-ok', style: { marginTop: '8px' } }, pubMsg)
+						)
+					),
+					h('div', { className: 'reproxy-lan-row' },
+						h('div', { style: { width: '100%', minWidth: 0 } },
+							h('div', { className: 'reproxy-lan-title' }, '额外端口转发'),
+							h('div', { className: 'reproxy-lan-desc' }, '有些插件/服务只监听 127.0.0.1（比如自己的小面板、别的 Web 工具），外面进不去。把它的端口填进来点「添加」，这个端口就会跟着上面「局域网访问」一起放出去；公网那边按「公网访问」的规则走（开了要密钥，没开只有内网能进）。最多 12 个，8080、3080 不能填。'),
+							h('div', { className: 'reproxy-lan-port', style: { marginTop: '10px' } },
+								h('input', {
+									className: 'reproxy-lan-input',
+									type: 'number',
+									min: 1024,
+									max: 65535,
+									placeholder: '例如 18787',
+									value: fwdDraft,
+									onChange: (e) => { setFwdDraft(e.target.value); setFwdMsg(''); setFwdBad(false); }
+								}),
+								h('button', {
+									className: 'reproxy-lan-save',
+									type: 'button',
+									disabled: fwdBusy !== '' || state === null,
+									onClick: () => {
+										const target = Number(String(fwdDraft).trim());
+										if (!Number.isInteger(target) || target < 1024 || target > 65535) { setFwdBad(true); setFwdMsg('端口要填 1024–65535 之间的整数'); return; }
+										setFwdBusy('add');
+										writeForward(target, false).then((body) => {
+											setFwdBusy('');
+											if (!body || body.ok !== true) { setFwdBad(true); setFwdMsg((body && body.error) || '添加失败'); return; }
+											setState(body);
+											setFwdDraft('');
+											setFwdBad(false);
+											setFwdMsg(body.added === false ? ('端口 ' + target + ' 已经在列表里了') : ('已添加 ' + target));
+										}).catch((e) => { setFwdBusy(''); setFwdBad(true); setFwdMsg(String((e && e.message) || e)); });
+									}
+								}, fwdBusy === 'add' ? '添加中…' : '添加')
+							),
+							h('div', { className: 'reproxy-lan-ctl', style: { marginTop: '12px', justifyContent: 'flex-start' } },
+								h('span', { className: 'reproxy-lan-state' }, '转发开关（无需求请勿开启）'),
+								h('button', {
+									className: 'reproxy-lan-switch' + (state && state.forwardsEnabled ? ' on' : ''),
+									type: 'button',
+									'aria-pressed': state && state.forwardsEnabled ? 'true' : 'false',
+									disabled: fwdBusy !== '' || state === null || !on,
+									title: !on ? '先打开上面的「局域网访问」总开关' : (state && state.forwardsEnabled ? '点击关闭端口转发' : '点击开启端口转发'),
+									onClick: () => {
+										const next = !(state && state.forwardsEnabled === true);
+										setFwdBusy('toggle');
+										writeForwardsEnabled(next).then((body) => {
+											setFwdBusy('');
+											if (!body || body.ok !== true) { setFwdBad(true); setFwdMsg((body && body.error) || '保存失败'); return; }
+											setState(body);
+											setFwdBad(false);
+											setFwdMsg(next ? '端口转发已开启' : '端口转发已关闭');
+										}).catch((e) => { setFwdBusy(''); setFwdBad(true); setFwdMsg(String((e && e.message) || e)); });
+									}
+								}, h('i'))
+							),
+							on ? null : h('div', { className: 'reproxy-lan-meta', style: { marginTop: '6px' } }, '总开关关着时端口只监听 127.0.0.1，转发开关点不动 —— 先打开上面的「局域网访问」。'),
+							(state && Array.isArray(state.forwards) && state.forwards.length > 0)
+								? h('div', { className: 'reproxy-lan-chips' },
+									state.forwards.map((p) => h('span', { className: 'reproxy-lan-chip', key: p },
+										':' + p,
+										h('button', {
+											type: 'button',
+											disabled: fwdBusy !== '',
+											onClick: () => {
+												setFwdBusy('del' + p);
+												writeForward(p, true).then((body) => {
+													setFwdBusy('');
+													if (!body || body.ok !== true) { setFwdBad(true); setFwdMsg((body && body.error) || '移除失败'); return; }
+													setState(body);
+													setFwdBad(false);
+													setFwdMsg('已移除 ' + p);
+												}).catch((e) => { setFwdBusy(''); setFwdBad(true); setFwdMsg(String((e && e.message) || e)); });
+											}
+										}, '移除')
+									))
+								)
+								: h('div', { className: 'reproxy-lan-meta', style: { marginTop: '8px' } }, '还没添加端口。'),
+							fwdMsg === '' ? null : h('div', { className: fwdBad ? 'reproxy-lan-err' : 'reproxy-lan-ok', style: { marginTop: '8px' } }, fwdMsg)
 						)
 					),
 					h('div', { className: 'reproxy-lan-row' },

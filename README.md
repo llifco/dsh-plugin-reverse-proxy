@@ -54,7 +54,7 @@ dsh plugin --profile web add dsh-plugin-reverse-proxy   # 推荐：npm 包，免
 
 ---
 
-## 七个能力
+## 八个能力
 
 > 0.3.5 起：设置页开关换成紫色，**监听端口**也能自己填了（默认 8080，保存即生效，重启保留）。
 
@@ -158,6 +158,9 @@ reproxy-lan --help
 | 只关公网 | `/lan public off` | `reproxy-lan public off` |
 | 换密钥 | `/lan key <密钥>` | `reproxy-lan key <密钥>` |
 | **列所有可访问地址** | — | `reproxy-lan addresses`（别名 `urls` / `addr` / `a`） |
+| 额外端口转发 | `/lan forward add 18787` | `reproxy-lan forward add 18787` |
+| 看 / 删转发端口 | `/lan forward` / `/lan forward del 18787` | `reproxy-lan forward` / `forward del 18787` |
+| 开 / 关转发 | `/lan forward on` / `off` | `reproxy-lan forward on` / `off` |
 | 恢复默认 | `/lan reset yes` | `reproxy-lan reset` |
 
 终端示例（`status` → `enable` → 输入 `yes` 确认 → 立刻监听 `0.0.0.0:8080`）：
@@ -220,7 +223,26 @@ http://<公网IP>:<端口>/<访问密钥>
 - 只有真正对外的网卡才列出来：`lo`、docker、veth、bridge、tun/tap、WireGuard、Tailscale、容器网段这些虚拟接口一律跳过；IPv6 有多条时挑**可用时间最长**的那条。
 - 每条右边一个「复制」按钮；手机上复制没反应就长按地址手动选——卡片底部也写着这句。
 
-### 6. 访问 IP 与黑名单（默认关闭）
+### 6. 额外端口转发（默认关闭）
+
+有些插件/服务只监听 `127.0.0.1`（自己的小面板、别的 Web 工具、临时的调试页面），局域网和公网都进不去。
+把它的端口填进这一栏点「添加」，它就会**跟着「局域网访问」一起朝外监听**：
+
+- 内网：`http://<机器IP>:<那个端口>/`，跟 8080 一样直接进
+- 公网：按「公网访问」的规则走 —— 开了公网要密钥（先在 8080 用密钥登录一次，种下的 cookie 对所有转发端口有效），没开只有内网能进
+- 黑名单、403 页面、复制地址，全都联动
+
+规则：最多 **12** 个端口；`8080`（反代自己）与 `3080`（DSH 本体）不能填；端口要是 1024–65535。
+关掉「局域网访问」总开关，这些端口会一起消失；重开自动回来。
+
+```
+/lan forward            看开关和已添加的端口
+/lan forward add 18787  添加
+/lan forward del 18787  移除
+/lan forward on         打开转发（要总开关先开）
+```
+
+### 7. 访问 IP 与黑名单（默认关闭）
 
 设置页还有一张「访问 IP」卡片：
 
@@ -247,7 +269,7 @@ reproxy-lan reset      # 先给你看会重置什么，输入 yes 才执行
 > ⚠️ 不要拉黑「当前正在使用的这台设备」——后端会直接拒绝（400），回环地址 `127.0.0.1` 也不允许拉黑，
 > 免得管理员把自己锁在外面。真要封自己，先在另一台设备上操作。
 
-### 7. 免 Token 登录（版本门控，命中才启用）
+### 8. 免 Token 登录（版本门控，命中才启用）
 
 替换官方 `@deepseek-ai/dsh-client-connection` 提供方，跳过 BrowserAuth：
 浏览器直接打开 Web 地址就能用。

@@ -59,7 +59,7 @@ No GUI around? The same switch works from a terminal (`yes` is required) — see
 </p>
 ---
 
-## Seven capabilities
+## Eight capabilities
 
 > Since 0.3.5: the settings switch is purple, and the **listening port** is editable
 > (default 8080, applied on save, kept across restarts).
@@ -119,6 +119,9 @@ or **Settings → 局域网访问 (LAN access)** → flip the switch → confirm
 | Close public access only | `/lan public off` | `reproxy-lan public off` |
 | Change the key | `/lan key <key>` | `reproxy-lan key <key>` |
 | **List every reachable address** | — | `reproxy-lan addresses` (aliases `urls` / `addr` / `a`) |
+| Extra port forwarding | `/lan forward add 18787` | `reproxy-lan forward add 18787` |
+| Show / remove forwarded ports | `/lan forward` / `/lan forward del 18787` | `reproxy-lan forward` / `forward del 18787` |
+| Enable / disable forwarding | `/lan forward on` / `off` | `reproxy-lan forward on` / `off` |
 | Restore defaults | `/lan reset yes` | `reproxy-lan reset` |
 
 Terminal example (`status` → `enable` → typing `yes` → listening on `0.0.0.0:8080`):
@@ -194,7 +197,29 @@ Below "Public access" there is an **External addresses** card that works out how
 - Only real interfaces are listed: `lo`, docker, veth, bridges, tun/tap, WireGuard, Tailscale and container subnets are skipped, and the IPv6 row picks the address with the **longest lifetime**.
 - A **Copy** button sits on each row; if copying does nothing on a phone, long-press the address — the card says so too.
 
-### 6. Access IPs and blacklist (off by default)
+### 6. Extra port forwarding (off by default)
+
+Plenty of add-ons only listen on `127.0.0.1` — their own little panel, a debug page, some
+other web tool — so neither the LAN nor the internet can reach them. Drop the port into
+this field, hit **Add**, and it is **published alongside LAN access**:
+
+- LAN: `http://<machine-ip>:<that-port>/`, straight in, same as 8080
+- Public: follows the public-access rule — with public access on you need the key first
+  (log in once through 8080 with the key; the cookie then covers every forwarded port)
+- Blacklist, the 403 page and address copying all apply
+
+Limits: up to **12** ports; `8080` (the proxy itself) and `3080` (DSH itself) are refused;
+ports must be 1024–65535. Turning the LAN switch off drops them all; turning it back on
+restores them.
+
+```
+/lan forward            show the switch and the ports
+/lan forward add 18787  add one
+/lan forward del 18787  remove one
+/lan forward on         enable forwarding (LAN switch must be on)
+```
+
+### 7. Access IPs and blacklist (off by default)
 
 - Lists every device that recently hit the port (IP, last seen, request count).
 - **Add** drops that IP into the blacklist; the device then gets a 403 page until you remove it.
@@ -211,7 +236,7 @@ reproxy-lan reset      # shows what will be restored, then asks you to type yes
 Or `/lan reset` in chat, confirmed with `/lan reset yes`. Reset turns LAN access off, port back to 8080,
 blacklist off and clears the list — devices currently connected over 8080 drop immediately, by design.
 
-### 7. Token-free login (version-gated)
+### 8. Token-free login (version-gated)
 
 Replaces the official `@deepseek-ai/dsh-client-connection` provider and skips BrowserAuth.
 

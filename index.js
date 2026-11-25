@@ -39,8 +39,11 @@ import {
   normalizeIp,
   resetConfig,
   onLanChange,
+  addForward,
+  removeForward,
   setAccessKey,
   setBlacklistEnabled,
+  setForwardsEnabled,
   setIpv6,
   setLanAccess,
   setPublicAccess,
@@ -592,6 +595,74 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
   }
 
   /** 只改密钥：不允许在公网已开时改成空。 */
+  const routeForwards = {
+    kind: 'exact',
+    path: '/reproxy-lan/forwards',
+    handler: async (req, res) => {
+      if (req.method === 'GET') {
+        sendJson(res, 200, describeLanState())
+        return
+      }
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { ok: false, error: '只支持 GET / POST' })
+        return
+      }
+      let body
+      try {
+        body = await readBody(req)
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+        return
+      }
+      try {
+        if (body.remove === true) {
+          const removed = removeForward(body.port, 'settings')
+          log('info', '设置页移除了额外端口 ' + removed)
+          sendJson(res, 200, describeLanState())
+          return
+        }
+        const result = addForward(body.port, 'settings')
+        log('warn', '设置页把端口 ' + body.port + ' 放出去了' + (result.added ? '' : '（本来就在列表里）'))
+        sendJson(res, 200, describeLanState())
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+      }
+    },
+  }
+
+  const routeForwardsEnabled = {
+    kind: 'exact',
+    path: '/reproxy-lan/forwards/enabled',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { ok: false, error: '只支持 POST' })
+        return
+      }
+      let body
+      try {
+        body = await readBody(req)
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+        return
+      }
+      if (body.confirm !== true) {
+        sendJson(res, 400, { ok: false, error: '缺少用户确认（confirm:true）' })
+        return
+      }
+      if (typeof body.enabled !== 'boolean') {
+        sendJson(res, 400, { ok: false, error: 'enabled 必须是布尔值' })
+        return
+      }
+      try {
+        setForwardsEnabled(body.enabled, 'settings')
+        log(body.enabled ? 'warn' : 'info', '设置页把额外端口转发' + (body.enabled ? '打开' : '关掉'))
+        sendJson(res, 200, describeLanState())
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+      }
+    },
+  }
+
   const routeKey = {
     kind: 'exact',
     path: '/reproxy-lan/key',
@@ -629,6 +700,8 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
     ctx.effect(() => webServer.register(routePublic))
     ctx.effect(() => webServer.register(routeIpv6))
     ctx.effect(() => webServer.register(routeKey))
+    ctx.effect(() => webServer.register(routeForwards))
+    ctx.effect(() => webServer.register(routeForwardsEnabled))
     ctx.effect(() => webServer.register(routeAddresses))
   } else {
     log('warn', 'webServer 不可用，设置页开关接口未注册')
@@ -665,7 +738,7 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
   ctx.effect(() => commands.register({
     name: 'lan',
     description: '查看或切换局域网/公网访问开关、端口与访问密钥',
-    input: { hint: 'yes | no | status | port <n> | ipv6 on|off | public on <key> | public off | key <key>' },
+    input: { hint: 'yes | no | status | port <n> | ipv6 on|off | public on <key> | public off | key <key> | forward list | forward add <n> | forward del <n> | forward on|off' },
     recordInput: true,
     handler: ({ rawInput }) => {
       const arg = String(rawInput || '').trim().toLowerCase()
@@ -765,6 +838,53 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
         }
         log(want ? 'warn' : 'info', '命令行把 IPv6 监听' + (want ? '打开' : '关掉'))
         return { kind: 'success', text: (want ? IPV6_WARNING_TEXT + '\n\n已开启 IPv6 监听，正在重建监听。' : 'IPv6 监听已关闭。') + '\n' + statusText() }
+      }
+      if (arg === 'forward' || arg === 'forward list' || arg === 'fwd') {
+        const st = getLanState()
+        const lines = [
+          '额外端口转发：' + (st.forwardsEnabled ? '已开启' : '已关闭') + '（依赖「局域网访问」总开关）',
+          st.forwards.length === 0 ? '· 还没有转发任何端口' : '· 正在放出的端口：' + st.forwards.map((p) => p + ' → 127.0.0.1:' + p).join('、'),
+          '',
+          '添加：/lan forward add 18787',
+          '删除：/lan forward del 18787',
+          '开关：/lan forward on | /lan forward off',
+        ]
+        return { kind: 'success', text: lines.join('\n') }
+      }
+      if (arg.indexOf('forward add') === 0) {
+        const port = arg.slice('forward add'.length).trim()
+        try {
+          const result = addForward(port, 'command')
+          log('warn', '命令行把端口 ' + port + ' 放出去了')
+          const st = result.state
+          return {
+            kind: 'success',
+            text: '已加入转发列表：' + port + ' → 127.0.0.1:' + port
+              + (st.forwardsEnabled ? '' : '\n（转发总开关还关着，/lan forward on 打开后才会真正监听）')
+              + '\n' + statusText(),
+          }
+        } catch (e) {
+          return { kind: 'error', text: e.message }
+        }
+      }
+      if (arg.indexOf('forward del') === 0 || arg.indexOf('forward remove') === 0) {
+        const port = arg.replace('forward del', '').replace('forward remove', '').trim()
+        try {
+          const result = removeForward(port, 'command')
+          return { kind: 'success', text: (result.removed ? '已移除转发：' : '列表里本来就没有：') + port + '\n' + statusText() }
+        } catch (e) {
+          return { kind: 'error', text: e.message }
+        }
+      }
+      if (arg === 'forward on' || arg === 'forward off') {
+        const want = arg === 'forward on'
+        try {
+          setForwardsEnabled(want, 'command')
+        } catch (e) {
+          return { kind: 'error', text: e.message }
+        }
+        log(want ? 'warn' : 'info', '命令行把额外端口转发' + (want ? '打开' : '关掉'))
+        return { kind: 'success', text: (want ? '额外端口转发已开启，列表里的端口会跟着 8080 一起放出去。' : '额外端口转发已关闭（端口列表保留）。') + '\n' + statusText() }
       }
       if (arg === 'reset') {
         return {
@@ -1097,6 +1217,120 @@ function applyProxy(ctx, config) {
     upstream.setNoDelay(true)
   }
 
+  // ---- 额外端口转发：把只监听 127.0.0.1 的插件端口顺着同一套开关放出去 ----
+  const forwardServers = new Map()
+
+  const closeForward = (port) => {
+    const entry = forwardServers.get(port)
+    if (!entry) return
+    forwardServers.delete(port)
+    clearTimeout(entry.retryTimer)
+    for (const server of entry.list) {
+      try { server.close() } catch { /* 已关 */ }
+    }
+  }
+
+  const forwardGate = (req) => {
+    const ip = noteClient(req)
+    if (ip !== '' && isBlocked(ip)) return 'blocked'
+    // 额外端口不认 /<key> 路径（那会跟插件自己的路由打架）：
+    // 先在 8080 用密钥进一次，cookie 是按主机共享的，这里就认了
+    return accessGate(req) === 'ok' ? 'ok' : 'need-cookie'
+  }
+
+  const startForward = (host, port) => {
+    if (forwardServers.has(port)) return
+    const entry = { list: [], retryTimer: null }
+    forwardServers.set(port, entry)
+    const target = { upstreamHost: '127.0.0.1', upstreamPort: port, maxBodyBytes: cfg.maxBodyBytes, upstreamHostHeader: '127.0.0.1:' + port, upstreamOrigin: 'http://127.0.0.1:' + port }
+
+    const handleRequest = (req, res) => {
+      const verdict = forwardGate(req)
+      if (verdict === 'blocked') { sendBlocked(res); return }
+      if (verdict !== 'ok') {
+        sendHtml(res, 403, '<!doctype html><meta charset="utf-8"><title>需要先登录</title><body style="font-family:system-ui;background:#14161c;color:#dfe3ea;padding:48px"><h1 style="font-size:20px">403 · 需要先通过密钥验证</h1><p style="color:#9aa0ad">这个端口是用访问密钥放出来的：先在 <code>:' + cfg.listenPort + '</code> 打开一次并输入密钥，再回到这个地址即可。</p>')
+        return
+      }
+      const headers = upstreamHeaders(req, target, {})
+      const up = http.request({ host: target.upstreamHost, port: target.upstreamPort, method: req.method, path: req.url || '/', headers }, (upRes) => {
+        if (res.writableEnded) { upRes.destroy(); return }
+        res.writeHead(upRes.statusCode || 502, upRes.statusMessage, downHeaders(upRes.headers))
+        upRes.pipe(res)
+      })
+      up.on('error', (err) => {
+        if (res.writableEnded) return
+        if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' })
+        res.end('这个端口没有服务在听：' + err.message)
+      })
+      req.on('aborted', () => { try { up.destroy() } catch { /* 已关 */ } })
+      res.on('close', () => { if (!res.writableFinished) { try { up.destroy() } catch { /* 已关 */ } } })
+      req.pipe(up, { end: true })
+      up.setTimeout(0)
+    }
+
+    const handleUpgrade = (req, clientSocket, head) => {
+      const verdict = forwardGate(req)
+      if (verdict !== 'ok') {
+        try { clientSocket.end('HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\nconnection: close\r\n\r\n') } catch { /* 已关 */ }
+        return
+      }
+      const upstream = net.connect(target.upstreamPort, target.upstreamHost, () => {
+        const headers = upstreamHeaders(req, target, { connection: 'Upgrade', upgrade: req.headers.upgrade || 'websocket' })
+        let raw = req.method + ' ' + (req.url || '/') + ' HTTP/1.1\r\n'
+        for (const [k, v] of Object.entries(headers)) {
+          if (Array.isArray(v)) for (const item of v) raw += k + ': ' + item + '\r\n'
+          else if (v !== undefined) raw += k + ': ' + v + '\r\n'
+        }
+        raw += '\r\n'
+        upstream.write(raw)
+        if (head && head.length) upstream.write(head)
+        upstream.pipe(clientSocket)
+        clientSocket.pipe(upstream)
+      })
+      upstream.on('error', () => { try { clientSocket.destroy() } catch { /* 已关 */ } })
+      clientSocket.on('error', () => { try { upstream.destroy() } catch { /* 已关 */ } })
+      upstream.setTimeout(0)
+      upstream.setNoDelay(true)
+    }
+
+    const server = http.createServer({ requestTimeout: 0, headersTimeout: 0, keepAliveTimeout: 65000 }, handleRequest)
+    server.timeout = 0
+    server.setTimeout(0)
+    server.on('upgrade', handleUpgrade)
+    server.on('clientError', (_err, socket) => { try { socket.end('HTTP/1.1 400 Bad Request\r\n\r\n') } catch { /* 已关 */ } })
+    server.on('error', (err) => {
+      if (err && err.code === 'EADDRINUSE') {
+        log('error', '额外端口 ' + host + ':' + port + ' 被别的服务占用，' + cfg.retryMs + 'ms 后重试')
+        clearTimeout(entry.retryTimer)
+        entry.retryTimer = setTimeout(() => {
+          closeForward(port)
+          syncForwards()
+        }, cfg.retryMs)
+        try { server.close() } catch { /* 未监听 */ }
+        return
+      }
+      log('error', '额外端口监听失败 ' + host + ':' + port + ' — ' + (err && err.message))
+    })
+    server.listen(port, host, () => {
+      log('info', '额外端口已放出 ' + host + ':' + port + ' → 127.0.0.1:' + port)
+    })
+    entry.list.push(server)
+  }
+
+  const syncForwards = () => {
+    let current
+    try { current = getLanState() } catch { return }
+    const want = current.lanAccess === true && current.forwardsEnabled === true
+      ? current.forwards.filter((p) => p !== cfg.listenPort && p !== 3080)
+      : []
+    for (const port of [...forwardServers.keys()]) {
+      if (!want.includes(port)) closeForward(port)
+    }
+    if (want.length === 0) return
+    const host = effectiveListenHost()
+    for (const port of want) startForward(host, port)
+  }
+
   const start = (host) => {
     const server = http.createServer({
       requestTimeout: 0,
@@ -1153,6 +1387,7 @@ function applyProxy(ctx, config) {
     if (getLanState().lanAccess) {
       log('warn', '监听 ' + host + ':' + cfg.listenPort + ' —— 局域网访问已开启，同一网络里的任何设备都能进入 DSH 后台')
     }
+    syncForwards()
   }
 
   try {
@@ -1170,8 +1405,9 @@ function applyProxy(ctx, config) {
       const host = effectiveListenHost()
       const port = effectivePort()
       const v6 = getLanState().ipv6 === true
-      if (host === appliedHost && port === appliedPort && v6 === appliedV6) return
-      rebind()
+      if (host !== appliedHost || port !== appliedPort || v6 !== appliedV6) rebind()
+      // 额外端口列表/开关变了：只调整那几个转发监听，不动主监听
+      syncForwards()
     })
   } catch { /* 订阅失败不连坐 */ }
 
@@ -1189,6 +1425,7 @@ function applyProxy(ctx, config) {
     for (const s of servers) {
       try { s.close() } catch { /* 已关 */ }
     }
+    for (const port of [...forwardServers.keys()]) closeForward(port)
     log('info', '反代已停止')
   }
 

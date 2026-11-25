@@ -31,6 +31,9 @@ export const MAX_BLOCKED = 200
 /** 访问密钥：5–64 位，只允许英文字母和数字（拼音就是字母，不能有符号）。 */
 export const MIN_KEY_LENGTH = 5
 export const MAX_KEY_LENGTH = 64
+export const MAX_FORWARDS = 12
+/** 额外端口转发：只允许把这些「只监听本机」的端口放出去（排除主端口与 dsh 自身） */
+export const FORWARD_EXCLUDED = [8080, 3080]
 
 export const PUBLIC_WARNING_TITLE = '对公网开放访问？'
 export const PUBLIC_WARNING_LINES = [
@@ -112,6 +115,8 @@ const DEFAULT_STATE = {
   blacklistEnabled: false,
   blockedIps: [],
   publicAccess: false,
+  forwardsEnabled: false,
+  forwards: [],
   accessKey: '',
   ipv6: false,
   updatedAt: null,
@@ -131,6 +136,20 @@ const sanitizeBlocked = (value) => {
   return out
 }
 
+const sanitizeForwards = (value) => {
+  if (!Array.isArray(value)) return []
+  const out = []
+  for (const item of value) {
+    const parsed = validatePort(item)
+    if (!parsed.ok) continue
+    if (FORWARD_EXCLUDED.includes(parsed.port)) continue
+    if (out.includes(parsed.port)) continue
+    out.push(parsed.port)
+    if (out.length >= MAX_FORWARDS) break
+  }
+  return out
+}
+
 const readState = () => {
   try {
     const raw = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'))
@@ -145,6 +164,8 @@ const readState = () => {
       accessKey: key.ok ? key.key : '',
       // IPv6 只有总开关开着时才有意义：总开关关着，端口只绑 127.0.0.1
       ipv6: raw?.ipv6 === true && raw?.lanAccess === true,
+      forwardsEnabled: raw?.forwardsEnabled === true,
+      forwards: sanitizeForwards(raw?.forwards),
       updatedAt: typeof raw?.updatedAt === 'string' ? raw.updatedAt : null,
       updatedBy: typeof raw?.updatedBy === 'string' ? raw.updatedBy : null,
     }
@@ -184,13 +205,14 @@ const commit = (patch, by) => {
     updatedBy: by,
   }
   next.blockedIps = sanitizeBlocked(next.blockedIps)
+  next.forwards = sanitizeForwards(next.forwards)
   writeState(next)
   state = next
   notify()
   return getLanState()
 }
 
-export const getLanState = () => ({ ...state, blockedIps: [...state.blockedIps] })
+export const getLanState = () => ({ ...state, blockedIps: [...state.blockedIps], forwards: [...(state.forwards || [])] })
 
 /** 默认监听地址：没开就是本机回环。 */
 export const effectiveListenHost = () => (state.lanAccess ? '0.0.0.0' : '127.0.0.1')
@@ -283,6 +305,35 @@ export const isBlocked = (value) => {
  * 存在的意义是「误操作后的安全阀」——比如把自己或整个网段搞进黑名单、端口填成了别人占着的。
  * 注意：关掉局域网访问后，正从 8080 访问的设备会立刻断开，所以命令入口都要求二次确认。
  */
+export const setForwardsEnabled = (enabled, by = 'unknown') => {
+  if (enabled === true && state.lanAccess !== true) {
+    throw new Error('请先开启「局域网访问」总开关：端口朝外监听由它管，额外端口转发只是跟着它一起放出去。')
+  }
+  return commit({ forwardsEnabled: enabled === true }, by)
+}
+
+export const addForward = (port, by = 'unknown') => {
+  const parsed = validatePort(port)
+  if (!parsed.ok) throw new Error(parsed.error)
+  if (FORWARD_EXCLUDED.includes(parsed.port)) {
+    throw new Error(String(parsed.port) + ' 是主端口或 dsh 自己的端口，不能作为额外转发目标。')
+  }
+  if (state.forwards.includes(parsed.port)) {
+    return { added: false, state: getLanState() }
+  }
+  if (state.forwards.length >= MAX_FORWARDS) {
+    throw new Error('最多只能转发 ' + MAX_FORWARDS + ' 个端口，先删掉几个。')
+  }
+  return { added: true, state: commit({ forwards: [...state.forwards, parsed.port] }, by) }
+}
+
+export const removeForward = (port, by = 'unknown') => {
+  const parsed = validatePort(port)
+  if (!parsed.ok) throw new Error(parsed.error)
+  if (!state.forwards.includes(parsed.port)) return { removed: false, state: getLanState() }
+  return { removed: true, state: commit({ forwards: state.forwards.filter((p) => p !== parsed.port) }, by) }
+}
+
 export const resetConfig = (by = 'unknown') => commit({
   lanAccess: false,
   port: DEFAULT_PORT,
@@ -291,6 +342,8 @@ export const resetConfig = (by = 'unknown') => commit({
   publicAccess: false,
   accessKey: '',
   ipv6: false,
+  forwardsEnabled: false,
+  forwards: [],
 }, by)
 
 export const setIpv6 = (enabled, by = 'unknown') => {
@@ -315,6 +368,8 @@ const startWatch = () => {
         && next.publicAccess === state.publicAccess
         && next.accessKey === state.accessKey
         && next.ipv6 === state.ipv6
+        && next.forwardsEnabled === state.forwardsEnabled
+        && next.forwards.join(',') === state.forwards.join(',')
       if (same) return
       state = next
       notify()
@@ -344,6 +399,9 @@ export const describeLanState = (port) => {
     keyHint: current.accessKey === '' ? '' : current.accessKey.slice(0, 2) + '***' + current.accessKey.slice(-1),
     minKeyLength: MIN_KEY_LENGTH,
     ipv6: current.ipv6,
+    forwardsEnabled: current.forwardsEnabled,
+    forwards: current.forwards,
+    maxForwards: MAX_FORWARDS,
     warningPublic: PUBLIC_WARNING_TEXT,
     warningIpv6: IPV6_WARNING_TEXT,
     stateFile: STATE_FILE,
