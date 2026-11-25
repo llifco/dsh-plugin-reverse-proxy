@@ -174,6 +174,8 @@ window.__ModuleLoader__.load({
 			'.reproxy-lan-fwchip button{border:none;background:transparent;color:#a5b4fc;cursor:pointer;font-size:12px;padding:0}',
 			'.reproxy-lan-fwchip button:hover{color:#e0e7ff}',
 			'.reproxy-lan-fwchip button[disabled]{opacity:.5;cursor:default}',
+			'.reproxy-lan-link{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;padding:6px 14px;border-radius:8px;border:1px solid rgba(139,92,246,.45);background:rgba(139,92,246,.12);color:#c4b5fd;text-decoration:none;transition:background .15s,color .15s}',
+			'.reproxy-lan-link:hover{background:rgba(139,92,246,.24);color:#e9d5ff}',
 			'.reproxy-lan-mask{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:9999}',
 			'.reproxy-lan-card{width:min(460px,92vw);background:var(--dsw-alias-bg-layer-1,#1c1f26);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:20px;box-shadow:0 18px 48px rgba(0,0,0,.45)}',
 			'.reproxy-lan-card h3{margin:0 0 10px;font-size:15px;color:var(--dsw-alias-label-primary,#e6e8ee)}',
@@ -459,6 +461,14 @@ window.__ModuleLoader__.load({
 								onClick: () => setAsking(true)
 							}, h('i'))
 						)
+					),
+					h('div', { className: 'reproxy-lan-row', style: { alignItems: 'flex-start' } },
+						h('a', {
+							className: 'reproxy-lan-link',
+							href: 'https://qm.qq.com/q/X5L0ZDvCYc',
+							target: '_blank',
+							rel: 'noopener noreferrer'
+						}, '联系插件官方作者')
 					),
 					h('div', { className: 'reproxy-lan-row' },
 						h('div', null,
