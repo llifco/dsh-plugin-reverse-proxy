@@ -4,3 +4,6 @@ node_modules/
 
 # 插件大包/临时产物（dist 里只保留发布包）
 !dist/*.tgz
+
+# 根目录打包产物（npm pack 出来的）
+/*.tgz
