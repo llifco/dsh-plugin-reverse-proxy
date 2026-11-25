@@ -34,10 +34,15 @@ confirm — your phone can connect.
 
 ## What it looks like
 
-**Settings → LAN access** (off by default; flipping it asks for confirmation first):
+**Settings → LAN access** (0.9.0, one page; off by default, flipping it asks for confirmation first).
+Master switch with a **Contact the author** button, IPv6 listener, port, public access + key (**Random** button), **extra port forwarding** (publish ports that only listen on 127.0.0.1), **external addresses** (one row each for LAN/WAN IPv4+IPv6, plus one row per forwarded port, live port, one-click copy) and the access-IP blacklist:
 
 <p align="center">
   <img src="assets/settings-lan-access.jpg" width="560" alt="Settings · LAN access (main switch / IPv6 / port / public access + key)">
+</p>
+
+<p align="center">
+  <img src="assets/settings-forward.jpg" width="560" alt="Settings · Extra port forwarding (port input / switch / added ports)">
 </p>
 
 <p align="center">
