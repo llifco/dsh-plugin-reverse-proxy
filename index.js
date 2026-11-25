@@ -1314,33 +1314,54 @@ function applyProxy(ctx, config) {
       upstream.setNoDelay(true)
     }
 
-    const server = http.createServer({ requestTimeout: 0, headersTimeout: 0, keepAliveTimeout: 65000 }, handleRequest)
-    server.timeout = 0
-    server.setTimeout(0)
-    server.on('upgrade', handleUpgrade)
-    server.on('clientError', (_err, socket) => { try { socket.end('HTTP/1.1 400 Bad Request\r\n\r\n') } catch { /* 已关 */ } })
-    server.on('error', (err) => {
-      if (err && err.code === 'EADDRINUSE') {
-        log('error', '额外端口 ' + host + ':' + port + ' 被别的服务占用，' + cfg.retryMs + 'ms 后重试')
-        clearTimeout(entry.retryTimer)
-        entry.retryTimer = setTimeout(() => {
-          closeForward(port)
-          syncForwards()
-        }, cfg.retryMs)
-        try { server.close() } catch { /* 未监听 */ }
-        return
-      }
-      log('error', '额外端口监听失败 ' + host + ':' + port + ' — ' + (err && err.message))
-    })
-    server.listen(port, host, () => {
-      log('info', '额外端口已放出 ' + host + ':' + port + ' → 127.0.0.1:' + port)
-    })
-    entry.list.push(server)
+    // 上游占着 127.0.0.1:port，绑 0.0.0.0:port 必然 EADDRINUSE；
+    // 只绑局域网那几张 IPv4 网卡（10.0.0.115:18787 这种），互不冲突，外部仍能直达。
+    const hosts = (Array.isArray(host) ? host : [host]).filter((h) => typeof h === 'string' && h !== '' && h !== '0.0.0.0')
+    if (hosts.length === 0) {
+      log('error', '额外端口 ' + port + ' 没有可用的局域网地址，先不放出')
+      forwardServers.delete(port)
+      return
+    }
+    for (const h of hosts) {
+      const server = http.createServer({ requestTimeout: 0, headersTimeout: 0, keepAliveTimeout: 65000 }, handleRequest)
+      server.timeout = 0
+      server.setTimeout(0)
+      server.on('upgrade', handleUpgrade)
+      server.on('clientError', (_err, socket) => { try { socket.end('HTTP/1.1 400 Bad Request\r\n\r\n') } catch { /* 已关 */ } })
+      server.on('error', (err) => {
+        if (err && err.code === 'EADDRINUSE') {
+          log('error', '额外端口 ' + h + ':' + port + ' 已被占用，' + cfg.retryMs + 'ms 后重试')
+          clearTimeout(entry.retryTimer)
+          entry.retryTimer = setTimeout(() => { closeForward(port); syncForwards() }, cfg.retryMs)
+          try { server.close() } catch { /* 未监听 */ }
+          return
+        }
+        log('error', '额外端口监听失败 ' + h + ':' + port + ' — ' + (err && err.message))
+      })
+      server.listen(port, h, () => {
+        log('info', '额外端口已放出 ' + h + ':' + port + ' → 127.0.0.1:' + port)
+      })
+      entry.list.push(server)
+    }
   }
 
-  // 0.9.0 起：转发走 /@端口 路径（同端口另开监听必撞 EADDRINUSE），这里只负责关掉历史遗留的独立监听
   const syncForwards = () => {
-    for (const port of [...forwardServers.keys()]) closeForward(port)
+    let current
+    try { current = getLanState() } catch { return }
+    const want = current.lanAccess === true && current.forwardsEnabled === true
+      ? current.forwards.filter((p) => p !== cfg.listenPort && p !== cfg.upstreamPort)
+      : []
+    for (const port of [...forwardServers.keys()]) {
+      if (!want.includes(port)) closeForward(port)
+    }
+    if (want.length === 0) return
+    let lanHosts = []
+    try { lanHosts = collectAddresses().lan4.map((row) => row.address) } catch { lanHosts = [] }
+    if (lanHosts.length === 0) return
+    for (const port of want) {
+      if (forwardServers.has(port)) continue
+      startForward(lanHosts, port)
+    }
   }
 
   const start = (host) => {
