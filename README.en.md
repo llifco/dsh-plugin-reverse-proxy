@@ -212,6 +212,12 @@ Limits: up to **12** ports; `8080` (the proxy itself) and `3080` (DSH itself) ar
 ports must be 1024–65535. Turning the LAN switch off drops them all; turning it back on
 restores them.
 
+After adding, the **External addresses** card grows one row per port (up to 12; a single
+hint line when none). Each row is health-checked — if nothing listens on that port it says
+so instead of handing you a 502 later.
+
+The master switch card also carries a **Contact the author** button (QQ group 1065464637).
+
 ```
 /lan forward            show the switch and the ports
 /lan forward add 18787  add one
