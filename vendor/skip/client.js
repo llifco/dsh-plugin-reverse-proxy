@@ -282,7 +282,7 @@ window.__ModuleLoader__.load({
 					load();
 					const timer = setInterval(load, 8000);
 					return () => { alive = false; clearInterval(timer); };
-				}, [state && state.port, state && state.ipv6, state && state.publicAccess]);
+				}, [state && state.port, state && state.ipv6, state && state.publicAccess, state && (Array.isArray(state.forwards) ? state.forwards.join(',') : ''), state && state.forwardsEnabled]);
 				const copyRow = (row) => {
 					const text = String(row.url || '');
 					const ok = () => { setCopied(row.id); setTimeout(() => setCopied(''), 1600); };
@@ -629,7 +629,7 @@ window.__ModuleLoader__.load({
 					h('div', { className: 'reproxy-lan-row' },
 						h('div', { style: { width: '100%', minWidth: 0 } },
 							h('div', { className: 'reproxy-lan-title' }, '外部访问地址'),
-							h('div', { className: 'reproxy-lan-desc' }, '这台机器现在能怎么访问进来：内网/公网、IPv4/IPv6 各一条，端口按你设的实时值拼，开关一改就跟着变。点「复制」拿走整条地址。'),
+							h('div', { className: 'reproxy-lan-desc' }, '这台机器现在能怎么访问进来：内网/公网、IPv4/IPv6 各一条，加上你添加的每个插件端口一条，端口按你设的实时值拼，开关一改就跟着变。点「复制」拿走整条地址。'),
 							h('div', { className: 'reproxy-lan-list', style: { marginTop: '10px' } },
 								addresses.length === 0
 									? h('div', { className: 'reproxy-lan-meta' }, '正在读取地址…')

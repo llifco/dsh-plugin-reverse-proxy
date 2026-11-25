@@ -217,6 +217,30 @@ export function isPrivateIp(value) {
 
 /** 探测出口公网 IPv4（拿不到就返回 null）。结果缓存 10 分钟，别每次开设置页都去求一次。 */
 let wan4Cache = { at: 0, value: null }
+const PORT_ALIVE_CACHE = new Map()
+
+// 额外端口探活：看 127.0.0.1:port 有没有服务在听（3 秒缓存，卡片 8 秒轮询一次够用）
+export async function probePortAlive(port) {
+  const now = Date.now()
+  const hit = PORT_ALIVE_CACHE.get(port)
+  if (hit && now - hit.at < 3000) return hit.alive
+  const alive = await new Promise((resolve) => {
+    let settled = false
+    const done = (value) => {
+      if (settled) return
+      settled = true
+      try { sock.destroy() } catch { /* 已关 */ }
+      resolve(value)
+    }
+    const sock = net.connect({ port: Number(port), host: '127.0.0.1' })
+    sock.setTimeout(400, () => done(false))
+    sock.on('connect', () => done(true))
+    sock.on('error', () => done(false))
+  })
+  PORT_ALIVE_CACHE.set(port, { at: now, alive })
+  return alive
+}
+
 export async function probeWan4({ force = false } = {}) {
   const now = Date.now()
   if (!force && now - wan4Cache.at < 600000) return wan4Cache.value
@@ -556,7 +580,28 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
         rows.push({ id: 'wan6', label: '公网 IPv6', url: '', hint: '公网访问没开。' })
       }
 
-      sendJson(res, 200, { ok: true, port, ipv6: st.ipv6 === true, publicAccess: st.publicAccess === true, rows })
+      const fwdList = Array.isArray(st.forwards) ? st.forwards : []
+      const fwdOn = st.forwardsEnabled === true && st.lanAccess === true
+      for (const fwdPort of fwdList) {
+        const alive = await probePortAlive(fwdPort)
+        let hint = ''
+        if (!fwdOn) hint = '额外端口转发的开关没开（或「局域网访问」关着）——打开后这一行才会真正放出去。'
+        else if (!lan4) hint = '没检测到内网 IPv4，转发没有可以绑的地址。'
+        else if (!alive) hint = '这个端口现在没有服务在听——把对应的插件/服务起来就有了。'
+        rows.push({
+          id: 'fwd-' + fwdPort,
+          label: '插件端口 ' + fwdPort,
+          url: fwdOn && lan4 ? 'http://' + lan4.address + ':' + fwdPort + '/' : '',
+          hint,
+          forward: true,
+          port: fwdPort,
+        })
+      }
+      if (fwdList.length === 0) {
+        rows.push({ id: 'fwd-none', label: '插件端口', url: '', hint: '还没添加额外端口。在上面的「额外端口转发」里填端口并「添加」，这里就会跟着多出一行（最多 12 行）。' })
+      }
+
+      sendJson(res, 200, { ok: true, port, ipv6: st.ipv6 === true, publicAccess: st.publicAccess === true, forwards: fwdList, forwardsEnabled: st.forwardsEnabled === true, rows })
     },
   }
 
