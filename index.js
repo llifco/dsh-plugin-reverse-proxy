@@ -1106,6 +1106,25 @@ function applyProxy(ctx, config) {
     }, 400)
   }
 
+  // 额外端口转发走「同端口路径」：/@18787/xxx → 127.0.0.1:18787/xxx
+  // 为什么不另开一个监听：上游已经占着 127.0.0.1:18787，再 bind 0.0.0.0:18787 必然 EADDRINUSE。
+  const forwardTarget = (req) => {
+    const url = req.url || '/'
+    const m = /^\/@(\d{2,5})(.*)$/.exec(url)
+    if (!m) return null
+    const port = Number(m[1])
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) return null
+    if (port === cfg.listenPort || port === cfg.upstreamPort) return null
+    let st
+    try { st = getLanState() } catch { return null }
+    if (st.lanAccess !== true || st.forwardsEnabled !== true) return null
+    if (!Array.isArray(st.forwards) || !st.forwards.includes(port)) return null
+    let rest = m[2] || ''
+    if (rest === '') rest = '/'
+    else if (rest[0] !== '/' && rest[0] !== '?') rest = '/' + rest
+    return { port, path: rest }
+  }
+
   const onRequest = (req, res) => {
     const clientIp = noteClient(req)
     if (clientIp !== '' && isBlocked(clientIp)) {
@@ -1122,11 +1141,12 @@ function applyProxy(ctx, config) {
     }
     let received = 0
     let aborted = false
+    const tgt = forwardTarget(req)
     const upstream = http.request({
-      host: cfg.upstreamHost,
-      port: cfg.upstreamPort,
+      host: tgt ? '127.0.0.1' : cfg.upstreamHost,
+      port: tgt ? tgt.port : cfg.upstreamPort,
       method: req.method,
-      path: req.url,
+      path: tgt ? tgt.path : req.url,
       headers: upstreamHeaders(req, cfg),
     }, (up) => {
       if (res.headersSent) return
@@ -1191,12 +1211,13 @@ function applyProxy(ctx, config) {
       try { clientSocket.end('HTTP/1.1 ' + status + '\r\ncontent-length: 0\r\nconnection: close\r\n\r\n') } catch { /* 已关 */ }
       return
     }
-    const upstream = net.connect(cfg.upstreamPort, cfg.upstreamHost, () => {
+    const upTgt = forwardTarget(req)
+    const upstream = net.connect(upTgt ? upTgt.port : cfg.upstreamPort, upTgt ? '127.0.0.1' : cfg.upstreamHost, () => {
       const headers = upstreamHeaders(req, cfg, {
         connection: 'Upgrade',
         upgrade: req.headers.upgrade || 'websocket',
       })
-      let raw = req.method + ' ' + (req.url || '/') + ' HTTP/1.1\r\n'
+      let raw = req.method + ' ' + (upTgt ? upTgt.path : (req.url || '/')) + ' HTTP/1.1\r\n'
       for (const [k, v] of Object.entries(headers)) {
         if (Array.isArray(v)) for (const item of v) raw += k + ': ' + item + '\r\n'
         else if (v !== undefined) raw += k + ': ' + v + '\r\n'
@@ -1317,18 +1338,9 @@ function applyProxy(ctx, config) {
     entry.list.push(server)
   }
 
+  // 0.9.0 起：转发走 /@端口 路径（同端口另开监听必撞 EADDRINUSE），这里只负责关掉历史遗留的独立监听
   const syncForwards = () => {
-    let current
-    try { current = getLanState() } catch { return }
-    const want = current.lanAccess === true && current.forwardsEnabled === true
-      ? current.forwards.filter((p) => p !== cfg.listenPort && p !== 3080)
-      : []
-    for (const port of [...forwardServers.keys()]) {
-      if (!want.includes(port)) closeForward(port)
-    }
-    if (want.length === 0) return
-    const host = effectiveListenHost()
-    for (const port of want) startForward(host, port)
+    for (const port of [...forwardServers.keys()]) closeForward(port)
   }
 
   const start = (host) => {

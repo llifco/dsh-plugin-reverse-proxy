@@ -169,6 +169,11 @@ window.__ModuleLoader__.load({
 			'.reproxy-lan-chip{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-variant-numeric:tabular-nums;padding:3px 10px;border-radius:999px;background:rgba(255,107,107,.12);border:1px solid rgba(255,107,107,.35);color:#ffb3b3}',
 			'.reproxy-lan-chip button{border:none;background:transparent;color:#ff8f8f;cursor:pointer;font-size:12px;padding:0}',
 			'.reproxy-lan-chip button[disabled]{opacity:.5;cursor:default}',
+			'.reproxy-lan-fwchips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}',
+			'.reproxy-lan-fwchip{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-variant-numeric:tabular-nums;padding:3px 10px;border-radius:999px;background:rgba(139,92,246,.14);border:1px solid rgba(139,92,246,.4);color:#c4b5fd}',
+			'.reproxy-lan-fwchip button{border:none;background:transparent;color:#a5b4fc;cursor:pointer;font-size:12px;padding:0}',
+			'.reproxy-lan-fwchip button:hover{color:#e0e7ff}',
+			'.reproxy-lan-fwchip button[disabled]{opacity:.5;cursor:default}',
 			'.reproxy-lan-mask{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:9999}',
 			'.reproxy-lan-card{width:min(460px,92vw);background:var(--dsw-alias-bg-layer-1,#1c1f26);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:20px;box-shadow:0 18px 48px rgba(0,0,0,.45)}',
 			'.reproxy-lan-card h3{margin:0 0 10px;font-size:15px;color:var(--dsw-alias-label-primary,#e6e8ee)}',
@@ -545,7 +550,7 @@ window.__ModuleLoader__.load({
 					h('div', { className: 'reproxy-lan-row' },
 						h('div', { style: { width: '100%', minWidth: 0 } },
 							h('div', { className: 'reproxy-lan-title' }, '额外端口转发'),
-							h('div', { className: 'reproxy-lan-desc' }, '有些插件/服务只监听 127.0.0.1（比如自己的小面板、别的 Web 工具），外面进不去。把它的端口填进来点「添加」，这个端口就会跟着上面「局域网访问」一起放出去；公网那边按「公网访问」的规则走（开了要密钥，没开只有内网能进）。最多 12 个，8080、3080 不能填。'),
+							h('div', { className: 'reproxy-lan-desc' }, '有些插件/服务只监听 127.0.0.1（比如自己的小面板、别的 Web 工具），外面进不去。把它的端口填进来点「添加」，就能从外面访问了——注意走的是路径，不是另开一个端口：http://<机器IP>:<上面那个端口>/@18787/ 。公网那边按「公网访问」的规则走（开了要密钥，没开只有内网能进）。最多 12 个，8080 和本端口不能填。'),
 							h('div', { className: 'reproxy-lan-port', style: { marginTop: '10px' } },
 								h('input', {
 									className: 'reproxy-lan-input',
@@ -598,9 +603,9 @@ window.__ModuleLoader__.load({
 							),
 							on ? null : h('div', { className: 'reproxy-lan-meta', style: { marginTop: '6px' } }, '总开关关着时端口只监听 127.0.0.1，转发开关点不动 —— 先打开上面的「局域网访问」。'),
 							(state && Array.isArray(state.forwards) && state.forwards.length > 0)
-								? h('div', { className: 'reproxy-lan-chips' },
-									state.forwards.map((p) => h('span', { className: 'reproxy-lan-chip', key: p },
-										':' + p,
+								? h('div', { className: 'reproxy-lan-fwchips' },
+									state.forwards.map((p) => h('span', { className: 'reproxy-lan-fwchip', key: p },
+										'@' + p,
 										h('button', {
 											type: 'button',
 											disabled: fwdBusy !== '',
