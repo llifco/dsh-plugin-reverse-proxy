@@ -552,6 +552,20 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
     },
   }
 
+  /** 最近 20 条「防扫描命中」记录（内存环形，重启清空）。 */
+  const routeScanLog = {
+    kind: 'exact',
+    path: '/reproxy-lan/scanlog',
+    handler: async (req, res) => {
+      if (req.method !== 'GET') {
+        sendJson(res, 405, { ok: false, error: '只支持 GET' })
+        return
+      }
+      const hits = typeof extra.scanHits === 'function' ? extra.scanHits() : []
+      sendJson(res, 200, { ok: true, hits: Array.isArray(hits) ? hits : [] })
+    },
+  }
+
   /** IPv6 监听开关：同样要带 confirm，且总开关必须先开。 */
   const routeIpv6 = {
     kind: 'exact',
