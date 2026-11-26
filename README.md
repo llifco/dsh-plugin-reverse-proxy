@@ -296,10 +296,12 @@ reproxy-lan reset      # 先给你看会重置什么，输入 yes 才执行
 | 扫描器指纹 | User-Agent 命中 nmap / nikto / sqlmap / masscan / zgrab / nuclei / dirbuster / gobuster / wpscan / acunetix / nessus / openvas / netsparker / burpsuite / hydra / w3af / whatweb 等 |
 | Kali 系统 | UA 里出现 `kali` —— **直接拉黑，不看次数** |
 | 敏感路径探测 | `/.env` `/.git` `/wp-login.php` `/phpmyadmin` `/actuator` `/server-status` `/config.json` 这类路径，累计 **2 次**即拉黑 |
-| 批量扫路径 | 30 秒内不同路径 **≥ 25** 个 |
-| 请求洪水 | 30 秒内请求数 **≥ 150** |
+| 批量扫路径 | 60 秒内 **404 的陌生路径 ≥ 40 个**（只数 404；正常浏览几十个资源都是 200，不会进统计） |
+| 请求洪水 | 60 秒内 **404 ≥ 400 次** |
 
-- 本机 `127.0.0.1` / `::1` 永远不算，`curl` 这类正常命令行工具也不会被误伤（只看 `curl/7.x` 及以下的老指纹）。
+- 本机 `127.0.0.1` / `::1` 永远不算；**同一局域网里的设备（10.x / 172.16–31 / 192.168.x）不会因为「扫路径」被自动拉黑**，只留日志——避免把自己的手机、电视误封。内网来源若要拉黑，请手动「添加」。
+- `curl` 这类正常命令行工具不会被误伤（只看 `curl/7.x` 及以下的老指纹）。
+- 不默认开启：新装/升级后这个开关都是关的，要你亲手打开才生效。
 - 日志里会留 `[reproxy-lan] 疑似扫描：<ip> — <原因>`，方便事后核对。
 - 只防「扫描/探测」这类低成本行为，**不防 DDoS**；真要暴露公网，还是建议前面加一层 HTTPS 反向代理或 Cloudflare。
 

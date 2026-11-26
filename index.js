@@ -1212,9 +1212,11 @@ function applyProxy(ctx, config) {
   const KALI_UA = /kali/i
   const SENSITIVE_PATH = /^\/(?:\.env|\.git|\.svn|\.aws|\.ssh|\.ds_store|wp-login\.php|wp-admin|wp-content|phpmyadmin|pma|xmlrpc\.php|actuator|server-status|cgi-bin|manager\/html|solr|admin\.php|setup\.php|config\.json|backup|db\.sql|shell\.php)/i
   const scanStats = new Map()
-  const SCAN_WINDOW = 30 * 1000
-  const SCAN_MAX_UNIQUE = 25
-  const SCAN_MAX_REQ = 150
+  // 只统计「404 的未知路径」：正常加载后台会一口气拉几十个资源，按全部请求算必然误伤。
+  const SCAN_WINDOW = 60 * 1000
+  const SCAN_MAX_UNIQ_404 = 40
+  const SCAN_MAX_404 = 400
+  const SCAN_SKIP_PREFIX = /^\/(?:plugins|assets|api|@\d)/
 
   const scanTrip = (ip, why) => {
     try {
@@ -1224,7 +1226,15 @@ function applyProxy(ctx, config) {
     } catch (e) { log('warn', '自动拉黑失败：' + e.message) }
   }
 
-  const scanCheck = (req, ip) => {
+  const pathOf = (req) => {
+    try {
+      const u = new URL(req.url || '/', 'http://localhost')
+      return u.pathname || '/'
+    } catch { return '/' }
+  }
+
+  // 第一层：只看请求头（UA / 敏感路径），命中就是真扫描，与响应码无关
+  const scanHead = (req, ip) => {
     if (ip === '' || ip === '::1' || /^127\./.test(ip)) return
     const st = getLanState()
     if (st.scanGuard !== true) return
@@ -1237,24 +1247,42 @@ function applyProxy(ctx, config) {
       if (!isBlocked(ip)) scanTrip(ip, '扫描器指纹')
       return
     }
-    let path = '/'
-    try {
-      const u = new URL(req.url || '/', 'http://localhost')
-      path = u.pathname || '/'
-    } catch { path = '/' }
+    const path = pathOf(req)
+    if (!SENSITIVE_PATH.test(path)) return
+    let rec = scanStats.get(ip)
+    const now = Date.now()
+    if (!rec || now - rec.first > SCAN_WINDOW) {
+      rec = { first: now, total: 0, uniq: new Set(), sens: 0, last: now }
+      scanStats.set(ip, rec)
+    }
+    rec.last = now
+    rec.sens += 1
+    rec.uniq.add(path)
+    if (rec.sens >= 2 && !isBlocked(ip)) scanTrip(ip, '探测敏感路径')
+  }
+
+  // 第二层：只统计「404 的未知路径」，正常浏览（资源/接口全 200）不会进入统计
+  const scanFinish = (ip, path, status) => {
+    if (ip === '' || ip === '::1' || /^127\./.test(ip)) return
+    if (status !== 404) return
+    if (SCAN_SKIP_PREFIX.test(path)) return
+    const st = getLanState()
+    if (st.scanGuard !== true) return
+    // 内网设备（同一 Wi-Fi 里的自己人）不按「扫路径」自动拉黑，只记录日志
+    const privateSource = isPrivateIp(ip)
     const now = Date.now()
     let rec = scanStats.get(ip)
     if (!rec || now - rec.first > SCAN_WINDOW) {
-      rec = { first: now, total: 0, uniq: new Set(), sens: 0 }
+      rec = { first: now, total: 0, uniq: new Set(), sens: 0, last: now }
       scanStats.set(ip, rec)
     }
+    rec.last = now
     rec.total += 1
     rec.uniq.add(path)
-    if (SENSITIVE_PATH.test(path)) rec.sens += 1
+    if (privateSource) return
     let why = ''
-    if (rec.sens >= 2) why = '探测敏感路径'
-    else if (rec.uniq.size >= SCAN_MAX_UNIQUE) why = '短时间内遍历大量路径'
-    else if (rec.total >= SCAN_MAX_REQ) why = '短时间请求量异常'
+    if (rec.uniq.size >= SCAN_MAX_UNIQ_404) why = '短时间内遍历大量不存在的路径'
+    else if (rec.total >= SCAN_MAX_404) why = '短时间大量 404'
     if (why !== '' && !isBlocked(ip)) scanTrip(ip, why)
   }
 
@@ -1403,7 +1431,11 @@ function applyProxy(ctx, config) {
 
   const onRequest = (req, res) => {
     const clientIp = noteClient(req)
-    if (clientIp !== '') scanCheck(req, clientIp)
+    if (clientIp !== '') {
+      scanHead(req, clientIp)
+      const scanPath = pathOf(req)
+      res.on('finish', () => { try { scanFinish(clientIp, scanPath, res.statusCode) } catch { /* 忽略 */ } })
+    }
     if (clientIp !== '' && isBlocked(clientIp)) {
       sendBlocked(res)
       return
@@ -1478,7 +1510,7 @@ function applyProxy(ctx, config) {
 
   const onUpgrade = (req, clientSocket, head) => {
     const upgradeIp = noteClient(req)
-    if (upgradeIp !== '') scanCheck(req, upgradeIp)
+    if (upgradeIp !== '') scanHead(req, upgradeIp)
     if (upgradeIp !== '' && isBlocked(upgradeIp)) {
       try { clientSocket.end('HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\nconnection: close\r\n\r\n') } catch { /* 已关 */ }
       return

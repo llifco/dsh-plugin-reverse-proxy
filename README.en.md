@@ -267,10 +267,12 @@ With the *Scan guard* switch on, any of the following puts the source IP on the 
 | Scanner fingerprint | User-Agent matching nmap / nikto / sqlmap / masscan / zgrab / nuclei / dirbuster / gobuster / wpscan / acunetix / nessus / openvas / netsparker / burpsuite / hydra / w3af / whatweb … |
 | Kali | `kali` anywhere in the UA — **blocked immediately** |
 | Sensitive paths | `/.env` `/.git` `/wp-login.php` `/phpmyadmin` `/actuator` `/server-status` `/config.json` … twice is enough |
-| Path sweep | **≥ 25** distinct paths within 30s |
-| Request flood | **≥ 150** requests within 30s |
+| Path sweep | **≥ 40 unknown 404 paths** within 60s (404s only — a normal page load is all 200s) |
+| 404 flood | **≥ 400 404s** within 60s |
 
-- `127.0.0.1` / `::1` are never blocked; ordinary CLI tools such as `curl` are not caught (only the old `curl/7.x` fingerprint).
+- `127.0.0.1` / `::1` are never blocked; **devices on the same LAN (10.x / 172.16–31 / 192.168.x) are never auto-blocked by the path heuristics** — only logged, so your own phone or TV cannot be locked out. Block them manually if you really want to.
+- Ordinary CLI tools such as `curl` are not caught (only the old `curl/7.x` fingerprint).
+- Off by default: after install or upgrade the switch stays off until you turn it on.
 - The reason is logged: `[reproxy-lan] 疑似扫描：<ip> — <reason>`.
 - It stops cheap scanning/probing, **not DDoS**. For real public exposure put HTTPS or Cloudflare in front.
 
