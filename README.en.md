@@ -242,6 +242,7 @@ The master switch card also carries a **Contact the author** button (QQ group 10
 - A **blacklist switch** sits right below the list ("no need, do not enable") — turning it off stops blocking but keeps the list.
 - Adding the same IP twice is a no-op (`added:false`); loopback and the device you are currently using cannot be blocked (HTTP 400), so you cannot lock yourself out.
 - The list is stored in the same state file (`blacklistEnabled`, `blockedIps`) and survives restarts.
+- **One row per device**: matched by MAC > IP > system+model > model (the browser is not part of the match). A new network (new IP) or a new browser only updates the existing row instead of adding another one.
 
 **Reset (safety valve for misconfiguration):**
 
