@@ -163,6 +163,8 @@ reproxy-lan --help
 | 换密钥 | `/lan key <密钥>` | `reproxy-lan key <密钥>` |
 | **列所有可访问地址** | — | `reproxy-lan addresses`（别名 `urls` / `addr` / `a`） |
 | 额外端口转发 | `/lan forward add 18787` | `reproxy-lan forward add 18787` |
+| 防扫描攻击 | `/lan scan on` / `/lan scan off` | `reproxy-lan scan on` / `reproxy-lan scan off` |
+| 清空访问记录 | `/lan clear` | `reproxy-lan clear` |
 | 看 / 删转发端口 | `/lan forward` / `/lan forward del 18787` | `reproxy-lan forward` / `forward del 18787` |
 | 开 / 关转发 | `/lan forward on` / `off` | `reproxy-lan forward on` / `off` |
 | 恢复默认 | `/lan reset yes` | `reproxy-lan reset` |
@@ -264,6 +266,9 @@ http://<公网IP>:<端口>/<访问密钥>
 - **同一台设备只占一行**：判定顺序 MAC > IP > 系统+型号 > 型号（浏览器不参与）。换了网络（IP 变了）或换了浏览器，都只更新原来那条，不会多出一行。
 
 - 名单和开关都存在同一个状态文件里（`blacklistEnabled` + `blockedIps` 两个字段），**重启 dsh 不丢**。
+- 黑名单开关右边有 **「一键清除」**：只清「最近访问」这张表，**已加入黑名单的 IP 不会被清掉，重启 dsh 也还在**；没被加黑的记录清完就没了（本来也会随重启消失）。
+- 再右边是 **「防扫描攻击」** 开关（默认关闭）：开启后会自动识别攻击行为并**把来源 IP 直接拉进黑名单**，命中的行/胶囊会带一个红色 **「攻击行为」** 标签（在「移除」按钮左边）。开启时会自动打开黑名单总开关，否则拦不住。判定规则见下面第 9 节。
+- 手机**双网络**（Wi-Fi + 流量同时在线）时，红色 IP 行下方会多一行浅蓝小字 `双网络已开启 · IP 10.0.0.165、10.0.0.241`，把这台设备最近 5 分钟内出现过的 IP 都列出来。
 
 #### 重置配置（防误操作的安全阀）
 
@@ -282,7 +287,25 @@ reproxy-lan reset      # 先给你看会重置什么，输入 yes 才执行
 > ⚠️ 不要拉黑「当前正在使用的这台设备」——后端会直接拒绝（400），回环地址 `127.0.0.1` 也不允许拉黑，
 > 免得管理员把自己锁在外面。真要封自己，先在另一台设备上操作。
 
-### 8. 免 Token 登录（版本门控，命中才启用）
+### 9. 防扫描攻击（默认关闭，自动拉黑）
+
+打开「访问 IP」卡片右侧那个「防扫描攻击」开关后，下面任一条命中，来源 IP 立刻进黑名单（403），并标红「攻击行为」：
+
+| 判定 | 触发条件 |
+|---|---|
+| 扫描器指纹 | User-Agent 命中 nmap / nikto / sqlmap / masscan / zgrab / nuclei / dirbuster / gobuster / wpscan / acunetix / nessus / openvas / netsparker / burpsuite / hydra / w3af / whatweb 等 |
+| Kali 系统 | UA 里出现 `kali` —— **直接拉黑，不看次数** |
+| 敏感路径探测 | `/.env` `/.git` `/wp-login.php` `/phpmyadmin` `/actuator` `/server-status` `/config.json` 这类路径，累计 **2 次**即拉黑 |
+| 批量扫路径 | 30 秒内不同路径 **≥ 25** 个 |
+| 请求洪水 | 30 秒内请求数 **≥ 150** |
+
+- 本机 `127.0.0.1` / `::1` 永远不算，`curl` 这类正常命令行工具也不会被误伤（只看 `curl/7.x` 及以下的老指纹）。
+- 日志里会留 `[reproxy-lan] 疑似扫描：<ip> — <原因>`，方便事后核对。
+- 只防「扫描/探测」这类低成本行为，**不防 DDoS**；真要暴露公网，还是建议前面加一层 HTTPS 反向代理或 Cloudflare。
+
+**不想要了**：设置页里把开关点掉，或 `reproxy-lan scan off` / `/lan scan off`。已经拉黑的 IP 会保留，需要手动「移除」或 `reproxy-lan clear` 之外的方式清理。
+
+### 10. 免 Token 登录（版本门控，命中才启用）
 
 替换官方 `@deepseek-ai/dsh-client-connection` 提供方，跳过 BrowserAuth：
 浏览器直接打开 Web 地址就能用。

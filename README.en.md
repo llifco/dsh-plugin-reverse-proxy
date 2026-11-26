@@ -125,6 +125,8 @@ or **Settings → 局域网访问 (LAN access)** → flip the switch → confirm
 | Change the key | `/lan key <key>` | `reproxy-lan key <key>` |
 | **List every reachable address** | — | `reproxy-lan addresses` (aliases `urls` / `addr` / `a`) |
 | Extra port forwarding | `/lan forward add 18787` | `reproxy-lan forward add 18787` |
+| Scan guard | `/lan scan on` / `/lan scan off` | `reproxy-lan scan on` / `reproxy-lan scan off` |
+| Clear access log | `/lan clear` | `reproxy-lan clear` |
 | Show / remove forwarded ports | `/lan forward` / `/lan forward del 18787` | `reproxy-lan forward` / `forward del 18787` |
 | Enable / disable forwarding | `/lan forward on` / `off` | `reproxy-lan forward on` / `off` |
 | Restore defaults | `/lan reset yes` | `reproxy-lan reset` |
@@ -242,6 +244,9 @@ The master switch card also carries a **Contact the author** button (QQ group 10
 - A **blacklist switch** sits right below the list ("no need, do not enable") — turning it off stops blocking but keeps the list.
 - Adding the same IP twice is a no-op (`added:false`); loopback and the device you are currently using cannot be blocked (HTTP 400), so you cannot lock yourself out.
 - The list is stored in the same state file (`blacklistEnabled`, `blockedIps`) and survives restarts.
+- **Clear** (right of the blacklist switch) wipes only the "recently seen" table: IPs already on the blacklist stay blocked and survive restarts.
+- **Scan guard** (next switch, off by default) auto-blocks sources that look like scanners/attackers and tags them with a red **攻击行为** badge left of the *Remove* button. Turning it on also enables the blacklist switch. Rules are in section 9.
+- On a phone with **two networks** (Wi-Fi + mobile data), a light-blue line appears under the red IP line: `双网络已开启 · IP 10.0.0.165、10.0.0.241` — every IP this device used in the last 5 minutes.
 - **One row per device**: matched by MAC > IP > system+model > model (the browser is not part of the match). A new network (new IP) or a new browser only updates the existing row instead of adding another one.
 
 **Reset (safety valve for misconfiguration):**
@@ -253,7 +258,23 @@ reproxy-lan reset      # shows what will be restored, then asks you to type yes
 Or `/lan reset` in chat, confirmed with `/lan reset yes`. Reset turns LAN access off, port back to 8080,
 blacklist off and clears the list — devices currently connected over 8080 drop immediately, by design.
 
-### 8. Token-free login (version-gated)
+### 9. Scan guard (off by default, auto-blocking)
+
+With the *Scan guard* switch on, any of the following puts the source IP on the blacklist (403) and tags it 攻击行为:
+
+| Signal | Trigger |
+|---|---|
+| Scanner fingerprint | User-Agent matching nmap / nikto / sqlmap / masscan / zgrab / nuclei / dirbuster / gobuster / wpscan / acunetix / nessus / openvas / netsparker / burpsuite / hydra / w3af / whatweb … |
+| Kali | `kali` anywhere in the UA — **blocked immediately** |
+| Sensitive paths | `/.env` `/.git` `/wp-login.php` `/phpmyadmin` `/actuator` `/server-status` `/config.json` … twice is enough |
+| Path sweep | **≥ 25** distinct paths within 30s |
+| Request flood | **≥ 150** requests within 30s |
+
+- `127.0.0.1` / `::1` are never blocked; ordinary CLI tools such as `curl` are not caught (only the old `curl/7.x` fingerprint).
+- The reason is logged: `[reproxy-lan] 疑似扫描：<ip> — <reason>`.
+- It stops cheap scanning/probing, **not DDoS**. For real public exposure put HTTPS or Cloudflare in front.
+
+### 10. Token-free login (version-gated)
 
 Replaces the official `@deepseek-ai/dsh-client-connection` provider and skips BrowserAuth.
 

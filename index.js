@@ -36,8 +36,10 @@ import {
   MIN_KEY_LENGTH,
   PUBLIC_WARNING_TEXT,
   isBlocked,
+  isScanBlocked,
   normalizeIp,
   resetConfig,
+  setScanGuard,
   onLanChange,
   addForward,
   removeForward,
@@ -502,6 +504,54 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
     },
   }
 
+
+  /** 防扫描攻击开关（开启时顺带打开黑名单总开关）。 */
+  const routeScan = {
+    kind: 'exact',
+    path: '/reproxy-lan/scan',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { ok: false, error: '只支持 POST' })
+        return
+      }
+      let body
+      try {
+        body = await readBody(req)
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+        return
+      }
+      if (typeof body.enabled !== 'boolean') {
+        sendJson(res, 400, { ok: false, error: '需要 enabled: true/false' })
+        return
+      }
+      try {
+        const result = setScanGuard(body.enabled, 'settings')
+        log(result.scanGuard ? 'warn' : 'info', '防扫描攻击：' + (result.scanGuard ? '已开启（黑名单总开关一并打开）' : '已关闭'))
+        sendJson(res, 200, withClients(describeLanState()))
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+      }
+    },
+  }
+
+  /** 一键清除：清空「最近访问」列表，已加入黑名单的 IP 保留（它们存在状态文件里）。 */
+  const routeClear = {
+    kind: 'exact',
+    path: '/reproxy-lan/clear',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { ok: false, error: '只支持 POST' })
+        return
+      }
+      const before = seenClients.size
+      seenClients.clear()
+      scanStats.clear()
+      log('info', '设置页一键清除访问记录：' + before + ' 条')
+      sendJson(res, 200, withClients({ ...describeLanState(), cleared: before }))
+    },
+  }
+
   /** IPv6 监听开关：同样要带 confirm，且总开关必须先开。 */
   const routeIpv6 = {
     kind: 'exact',
@@ -744,6 +794,8 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
     ctx.effect(() => webServer.register(routeUnblock))
     ctx.effect(() => webServer.register(routePublic))
     ctx.effect(() => webServer.register(routeIpv6))
+    ctx.effect(() => webServer.register(routeScan))
+    ctx.effect(() => webServer.register(routeClear))
     ctx.effect(() => webServer.register(routeKey))
     ctx.effect(() => webServer.register(routeForwards))
     ctx.effect(() => webServer.register(routeForwardsEnabled))
@@ -783,7 +835,7 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
   ctx.effect(() => commands.register({
     name: 'lan',
     description: '查看或切换局域网/公网访问开关、端口与访问密钥',
-    input: { hint: 'yes | no | status | port <n> | ipv6 on|off | public on <key> | public off | key <key> | forward list | forward add <n> | forward del <n> | forward on|off' },
+    input: { hint: 'yes | no | status | port <n> | ipv6 on|off | public on <key> | public off | key <key> | forward list | forward add <n> | forward del <n> | forward on|off | scan on|off | clear' },
     recordInput: true,
     handler: ({ rawInput }) => {
       const arg = String(rawInput || '').trim().toLowerCase()
@@ -931,6 +983,24 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
         log(want ? 'warn' : 'info', '命令行把额外端口转发' + (want ? '打开' : '关掉'))
         return { kind: 'success', text: (want ? '额外端口转发已开启，列表里的端口会跟着 8080 一起放出去。' : '额外端口转发已关闭（端口列表保留）。') + '\n' + statusText() }
       }
+      if (arg === 'scan on' || arg === 'scan off') {
+        const want = arg === 'scan on'
+        try {
+          const result = setScanGuard(want, 'command')
+          return {
+            kind: 'success',
+            text: (want
+              ? '防扫描攻击已开启（黑名单总开关已一并打开）：识别到扫描器指纹、Kali、敏感路径探测或短时间大量路径，会自动把来源 IP 拉黑。'
+              : '防扫描攻击已关闭（已经拉黑的 IP 仍留在名单里）。') + '\n' + statusText(),
+          }
+        } catch (e) {
+          return { kind: 'error', text: e.message }
+        }
+      }
+      if (arg === 'clear' || arg === 'clear seen') {
+        const before = typeof extra.clearSeen === 'function' ? extra.clearSeen() : 0
+        return { kind: 'success', text: '已清除 ' + before + ' 条访问记录（黑名单里的 IP 保持不变）。' }
+      }
       if (arg === 'reset') {
         return {
           kind: 'success',
@@ -1049,6 +1119,10 @@ function applyProxy(ctx, config) {
       hit.ip = ip
       hit.lastSeen = now
       hit.hits += 1
+      if (!(hit.ips instanceof Map)) hit.ips = new Map()
+      hit.ips.set(ip, now)
+      for (const [key, at] of hit.ips) if (now - at > 10 * 60 * 1000) hit.ips.delete(key)
+      if (hit.ips.size > 6) hit.ips.delete([...hit.ips.keys()][0])
       if (mac !== '') hit.mac = mac
       if (ua !== '') {
         hit.ua = ua
@@ -1069,6 +1143,7 @@ function applyProxy(ctx, config) {
       device: parts.line,
       model: parts.device,
       system: parts.system,
+      ips: new Map([[ip, now]]),
     }
     seenClients.set(entry.id, entry)
     if (seenClients.size > MAX_SEEN) {
@@ -1083,15 +1158,105 @@ function applyProxy(ctx, config) {
   }
 
   /** 给设置页看的快照（带 blocked 标记，前端据此决定按钮是「添加」还是「已在黑名单」）。 */
-  const listClients = () => [...seenClients.values()]
-    .sort((a, b) => b.lastSeen - a.lastSeen)
-    .map((entry) => ({
-      ...entry,
-      blocked: isBlocked(entry.ip),
-      private: isPrivateIp(entry.ip),
-      device: entry.device || describeUa(entry.ua || ''),
-      mac: entry.mac || lookupMac(entry.ip),
-    }))
+  const MULTI_WINDOW = 5 * 60 * 1000
+  const listClients = () => {
+    const st = getLanState()
+    const seen = new Set()
+    const rows = [...seenClients.values()]
+      .sort((a, b) => b.lastSeen - a.lastSeen)
+      .map((entry) => {
+        seen.add(entry.ip)
+        const now = Date.now()
+        const multiIps = entry.ips instanceof Map
+          ? [...entry.ips.entries()].filter(([, at]) => now - at <= MULTI_WINDOW).map(([key]) => key)
+          : []
+        return {
+          ...entry,
+          ips: undefined,
+          multiIps: multiIps.length > 1 ? multiIps : [],
+          blocked: isBlocked(entry.ip),
+          scan: isScanBlocked(entry.ip),
+          private: isPrivateIp(entry.ip),
+          device: entry.device || describeUa(entry.ua || ''),
+          mac: entry.mac || lookupMac(entry.ip),
+        }
+      })
+    // 黑名单里但这次还没访问过的 IP 也列出来，否则「一键清除」后它们会从界面上消失
+    for (const ip of st.blockedIps) {
+      if (seen.has(ip)) continue
+      rows.push({
+        id: 'blocked-' + ip,
+        ip,
+        mac: lookupMac(ip),
+        firstSeen: 0,
+        lastSeen: 0,
+        hits: 0,
+        ua: '',
+        device: '（已加入黑名单，本次还没访问）',
+        model: '未知',
+        system: '未知',
+        multiIps: [],
+        blocked: true,
+        scan: isScanBlocked(ip),
+        private: isPrivateIp(ip),
+      })
+    }
+    return rows
+  }
+
+  /**
+   * 防扫描攻击：靠 UA 指纹 + 敏感路径探测 + 短时间内的路径/请求量判断。
+   * 只在「防扫描攻击」开关打开时生效；命中就直接写进黑名单（带「攻击行为」标记）。
+   */
+  const SCAN_UA = /(nmap|nikto|sqlmap|masscan|zgrab|nuclei|dirbuster|gobuster|wpscan|acunetix|nessus|openvas|netsparker|burpsuite|hydra|w3af|whatweb|curl\/7\.(?:[0-8]))/i
+  const KALI_UA = /kali/i
+  const SENSITIVE_PATH = /^\/(?:\.env|\.git|\.svn|\.aws|\.ssh|\.ds_store|wp-login\.php|wp-admin|wp-content|phpmyadmin|pma|xmlrpc\.php|actuator|server-status|cgi-bin|manager\/html|solr|admin\.php|setup\.php|config\.json|backup|db\.sql|shell\.php)/i
+  const scanStats = new Map()
+  const SCAN_WINDOW = 30 * 1000
+  const SCAN_MAX_UNIQUE = 25
+  const SCAN_MAX_REQ = 150
+
+  const scanTrip = (ip, why) => {
+    try {
+      const result = blockIp(ip, 'scan-guard', 'scan')
+      if (result.added) log('warn', '防扫描命中（' + why + '），已自动拉黑：' + ip)
+      scanStats.delete(ip)
+    } catch (e) { log('warn', '自动拉黑失败：' + e.message) }
+  }
+
+  const scanCheck = (req, ip) => {
+    if (ip === '' || ip === '::1' || /^127\./.test(ip)) return
+    const st = getLanState()
+    if (st.scanGuard !== true) return
+    const ua = String((req.headers && req.headers['user-agent']) || '')
+    if (KALI_UA.test(ua)) {
+      if (!isBlocked(ip)) scanTrip(ip, 'Kali 系统指纹')
+      return
+    }
+    if (SCAN_UA.test(ua)) {
+      if (!isBlocked(ip)) scanTrip(ip, '扫描器指纹')
+      return
+    }
+    let path = '/'
+    try {
+      const u = new URL(req.url || '/', 'http://localhost')
+      path = u.pathname || '/'
+    } catch { path = '/' }
+    const now = Date.now()
+    let rec = scanStats.get(ip)
+    if (!rec || now - rec.first > SCAN_WINDOW) {
+      rec = { first: now, total: 0, uniq: new Set(), sens: 0 }
+      scanStats.set(ip, rec)
+    }
+    rec.total += 1
+    rec.uniq.add(path)
+    if (SENSITIVE_PATH.test(path)) rec.sens += 1
+    let why = ''
+    if (rec.sens >= 2) why = '探测敏感路径'
+    else if (rec.uniq.size >= SCAN_MAX_UNIQUE) why = '短时间内遍历大量路径'
+    else if (rec.total >= SCAN_MAX_REQ) why = '短时间请求量异常'
+    if (why !== '' && !isBlocked(ip)) scanTrip(ip, why)
+  }
 
   const BLOCKED_HTML = '<!doctype html><html lang="zh-CN"><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -1238,6 +1403,7 @@ function applyProxy(ctx, config) {
 
   const onRequest = (req, res) => {
     const clientIp = noteClient(req)
+    if (clientIp !== '') scanCheck(req, clientIp)
     if (clientIp !== '' && isBlocked(clientIp)) {
       sendBlocked(res)
       return
@@ -1312,6 +1478,7 @@ function applyProxy(ctx, config) {
 
   const onUpgrade = (req, clientSocket, head) => {
     const upgradeIp = noteClient(req)
+    if (upgradeIp !== '') scanCheck(req, upgradeIp)
     if (upgradeIp !== '' && isBlocked(upgradeIp)) {
       try { clientSocket.end('HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\nconnection: close\r\n\r\n') } catch { /* 已关 */ }
       return
@@ -1556,7 +1723,15 @@ function applyProxy(ctx, config) {
   } catch { /* 订阅失败不连坐 */ }
 
   try {
-    registerLanControl(ctx, cfg, log, { listClients })
+    registerLanControl(ctx, cfg, log, {
+      listClients,
+      clearSeen: () => {
+        const before = seenClients.size
+        seenClients.clear()
+        scanStats.clear()
+        return before
+      },
+    })
   } catch (e) {
     log('error', '局域网开关接口注册失败: ' + (e && e.message))
   }

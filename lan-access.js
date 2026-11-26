@@ -114,6 +114,8 @@ const DEFAULT_STATE = {
   port: DEFAULT_PORT,
   blacklistEnabled: false,
   blockedIps: [],
+  scanGuard: false,
+  scanBlocked: [],
   publicAccess: false,
   forwardsEnabled: false,
   forwards: [],
@@ -160,6 +162,8 @@ const readState = () => {
       port: parsed.ok ? parsed.port : DEFAULT_PORT,
       blacklistEnabled: raw?.blacklistEnabled === true,
       blockedIps: sanitizeBlocked(raw?.blockedIps),
+      scanGuard: raw?.scanGuard === true,
+      scanBlocked: sanitizeBlocked(raw?.scanBlocked),
       publicAccess: raw?.publicAccess === true && key.ok,
       accessKey: key.ok ? key.key : '',
       // IPv6 只有总开关开着时才有意义：总开关关着，端口只绑 127.0.0.1
@@ -205,6 +209,7 @@ const commit = (patch, by) => {
     updatedBy: by,
   }
   next.blockedIps = sanitizeBlocked(next.blockedIps)
+  next.scanBlocked = sanitizeBlocked(next.scanBlocked).filter((ip) => next.blockedIps.includes(ip))
   next.forwards = sanitizeForwards(next.forwards)
   writeState(next)
   state = next
@@ -212,7 +217,12 @@ const commit = (patch, by) => {
   return getLanState()
 }
 
-export const getLanState = () => ({ ...state, blockedIps: [...state.blockedIps], forwards: [...(state.forwards || [])] })
+export const getLanState = () => ({
+  ...state,
+  blockedIps: [...state.blockedIps],
+  scanBlocked: [...(state.scanBlocked || [])],
+  forwards: [...(state.forwards || [])],
+})
 
 /** 默认监听地址：没开就是本机回环。 */
 export const effectiveListenHost = () => (state.lanAccess ? '0.0.0.0' : '127.0.0.1')
@@ -269,15 +279,44 @@ export const setPublicAccess = (enabled, value, by = 'unknown') => {
 export const setBlacklistEnabled = (enabled, by = 'unknown') => commit({ blacklistEnabled: enabled === true }, by)
 
 /**
+ * 防扫描攻击开关。开启时顺手把黑名单总开关也打开（不然拉了黑也不生效）。
+ * 返回 `{ ok, scanGuard, blacklistEnabled }`。
+ */
+export const setScanGuard = (enabled, by = 'unknown') => {
+  if (enabled === true) {
+    const next = commit({ scanGuard: true, blacklistEnabled: true }, by)
+    return { ok: true, scanGuard: true, blacklistEnabled: true, state: next }
+  }
+  const next = commit({ scanGuard: false }, by)
+  return { ok: true, scanGuard: false, blacklistEnabled: next.blacklistEnabled === true, state: next }
+}
+
+/** 当前是否因为「防扫描」被自动拉黑。 */
+export const isScanBlocked = (value) => {
+  const ip = normalizeIp(value)
+  if (ip === '') return false
+  return (state.scanBlocked || []).includes(ip)
+}
+
+/**
  * 拉黑一个 IP。
  * 返回 `{ ok, added, state }`：`added:false` 表示本来就在名单里（同一个 IP 不需要重复添加）。
  */
-export const blockIp = (value, by = 'unknown') => {
+export const blockIp = (value, by = 'unknown', reason = 'manual') => {
   const ip = normalizeIp(value)
   if (ip === '') throw new Error('IP 地址不合法：' + String(value))
   if (isLoopback(ip)) throw new Error('不能封禁本机回环地址（会把设置页自己也锁在外面）')
-  if (state.blockedIps.includes(ip)) return { ok: true, added: false, ip, state: getLanState() }
-  const next = commit({ blockedIps: [...state.blockedIps, ip] }, by)
+  const scan = reason === 'scan'
+  if (state.blockedIps.includes(ip)) {
+    if (scan && !state.scanBlocked.includes(ip)) {
+      const next = commit({ scanBlocked: [...state.scanBlocked, ip] }, by)
+      return { ok: true, added: false, ip, state: next }
+    }
+    return { ok: true, added: false, ip, state: getLanState() }
+  }
+  const patch = { blockedIps: [...state.blockedIps, ip] }
+  if (scan) patch.scanBlocked = [...state.scanBlocked, ip]
+  const next = commit(patch, by)
   return { ok: true, added: true, ip, state: next }
 }
 
@@ -288,7 +327,7 @@ export const unblockIp = (value, by = 'unknown') => {
   const index = state.blockedIps.indexOf(ip)
   if (index === -1) return { ok: true, removed: false, ip, state: getLanState() }
   const rest = state.blockedIps.filter((item) => item !== ip)
-  const next = commit({ blockedIps: rest }, by)
+  const next = commit({ blockedIps: rest, scanBlocked: state.scanBlocked.filter((item) => item !== ip) }, by)
   return { ok: true, removed: true, ip, state: next }
 }
 
@@ -339,6 +378,8 @@ export const resetConfig = (by = 'unknown') => commit({
   port: DEFAULT_PORT,
   blacklistEnabled: false,
   blockedIps: [],
+  scanGuard: false,
+  scanBlocked: [],
   publicAccess: false,
   accessKey: '',
   ipv6: false,
@@ -365,6 +406,8 @@ const startWatch = () => {
         && next.port === state.port
         && next.blacklistEnabled === state.blacklistEnabled
         && next.blockedIps.join(',') === state.blockedIps.join(',')
+        && next.scanGuard === state.scanGuard
+        && next.scanBlocked.join(',') === state.scanBlocked.join(',')
         && next.publicAccess === state.publicAccess
         && next.accessKey === state.accessKey
         && next.ipv6 === state.ipv6
@@ -392,6 +435,8 @@ export const describeLanState = (port) => {
     blacklistEnabled: current.blacklistEnabled,
     blockedIps: current.blockedIps,
     blockedCount: current.blockedIps.length,
+    scanGuard: current.scanGuard === true,
+    scanBlocked: [...(current.scanBlocked || [])],
     publicAccess: current.publicAccess,
     hasKey: current.accessKey !== '',
     // 打开公网时把「该用哪条地址」直接给出去，省得用户自己拼
