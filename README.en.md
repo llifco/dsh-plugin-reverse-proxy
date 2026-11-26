@@ -47,6 +47,7 @@ Master switch with a **Contact the author** button, IPv6 listener, port, public 
 
 <p align="center">
   <img src="assets/settings-addresses.jpg" width="560" alt="Settings · External addresses and access IPs">
+  <img src="assets/settings-scan.jpg" width="560" alt="Settings · device flagged 攻击行为 and blacklisted">
 </p>
 
 No GUI around? The same switch works from a terminal (`yes` is required) — see [Usage](#usage).
@@ -126,6 +127,7 @@ or **Settings → 局域网访问 (LAN access)** → flip the switch → confirm
 | **List every reachable address** | — | `reproxy-lan addresses` (aliases `urls` / `addr` / `a`) |
 | Extra port forwarding | `/lan forward add 18787` | `reproxy-lan forward add 18787` |
 | Scan guard | `/lan scan on` / `/lan scan off` | `reproxy-lan scan on` / `reproxy-lan scan off` |
+| **Scan hits** (last 20) | — | `reproxy-lan scan log` |
 | Clear access log | `/lan clear` | `reproxy-lan clear` |
 | Show / remove forwarded ports | `/lan forward` / `/lan forward del 18787` | `reproxy-lan forward` / `forward del 18787` |
 | Enable / disable forwarding | `/lan forward on` / `off` | `reproxy-lan forward on` / `off` |
@@ -268,6 +270,16 @@ With the *Scan guard* switch on, any of the following puts the source IP on the 
 | Kali | `kali` anywhere in the UA — **blocked immediately** |
 | Sensitive paths | `/.env` `/.git` `/wp-login.php` `/phpmyadmin` `/actuator` `/server-status` `/config.json` … twice is enough |
 | Path sweep | **≥ 40 unknown 404 paths** within 60s (404s only — a normal page load is all 200s) |
+
+Every block leaves a **scan hit** record: time, source IP, matched rule, path and the first 120 chars of the UA (last 20 kept in memory, cleared on restart):
+
+```bash
+reproxy-lan scan log
+```
+
+The same line is written to the log: `journalctl -u dsh --no-pager | grep 防扫描`.
+
+> Want to try it yourself? `reproxy-lan scan test` walks through normal UA / sqlmap / 404 sweep / sensitive paths / loopback from the machine's LAN IP, then cleans up and restores the switch.
 | 404 flood | **≥ 400 404s** within 60s |
 
 - `127.0.0.1` / `::1` are never blocked; **devices on the same LAN (10.x / 172.16–31 / 192.168.x) are never auto-blocked by the path heuristics** — only logged, so your own phone or TV cannot be locked out. Block them manually if you really want to.

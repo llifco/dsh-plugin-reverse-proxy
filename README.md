@@ -46,6 +46,7 @@ dsh plugin --profile web add dsh-plugin-reverse-proxy   # 推荐：npm 包，免
 
 <p align="center">
   <img src="assets/settings-addresses.jpg" width="560" alt="设置 · 外部访问地址与访问 IP">
+  <img src="assets/settings-scan.jpg" width="560" alt="设置 · 被判定为「攻击行为」的设备与黑名单">
 </p>
 
 点「添加」把设备拉黑，它再打开后台只会看到 403：
@@ -164,6 +165,7 @@ reproxy-lan --help
 | **列所有可访问地址** | — | `reproxy-lan addresses`（别名 `urls` / `addr` / `a`） |
 | 额外端口转发 | `/lan forward add 18787` | `reproxy-lan forward add 18787` |
 | 防扫描攻击 | `/lan scan on` / `/lan scan off` | `reproxy-lan scan on` / `reproxy-lan scan off` |
+| **看拦截记录**（最近 20 条） | — | `reproxy-lan scan log` |
 | 清空访问记录 | `/lan clear` | `reproxy-lan clear` |
 | 看 / 删转发端口 | `/lan forward` / `/lan forward del 18787` | `reproxy-lan forward` / `forward del 18787` |
 | 开 / 关转发 | `/lan forward on` / `off` | `reproxy-lan forward on` / `off` |
@@ -298,6 +300,24 @@ reproxy-lan reset      # 先给你看会重置什么，输入 yes 才执行
 | 敏感路径探测 | `/.env` `/.git` `/wp-login.php` `/phpmyadmin` `/actuator` `/server-status` `/config.json` 这类路径，累计 **2 次**即拉黑 |
 | 批量扫路径 | 60 秒内 **404 的陌生路径 ≥ 40 个**（只数 404；正常浏览几十个资源都是 200，不会进统计） |
 | 请求洪水 | 60 秒内 **404 ≥ 400 次** |
+
+拉黑的那一刻会留一条**拦截记录**：时间、来源 IP、命中规则、请求路径、UA 前 120 字（内存里保留最近 20 条，重启清空）：
+
+```bash
+reproxy-lan scan log
+```
+
+```
+最近 1 条拦截：
+  15:01:25  10.0.0.115
+    规则：扫描器指纹
+    路径：/
+    UA  ：sqlmap/1.7.2#stable (http://sqlmap.org)
+```
+
+同样的内容也会写进日志：`journalctl -u dsh --no-pager | grep 防扫描`。
+
+> 想自己验一遍？`reproxy-lan scan test` —— 会用本机局域网 IP 依次试「正常访问 / sqlmap / 内网狂扫 404 / 敏感路径 / 回环」，跑完自动清理并恢复开关。
 
 - 本机 `127.0.0.1` / `::1` 永远不算；**同一局域网里的设备（10.x / 172.16–31 / 192.168.x）不会因为「扫路径」被自动拉黑**，只留日志——避免把自己的手机、电视误封。内网来源若要拉黑，请手动「添加」。
 - `curl` 这类正常命令行工具不会被误伤（只看 `curl/7.x` 及以下的老指纹）。
