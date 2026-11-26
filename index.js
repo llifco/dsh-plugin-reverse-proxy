@@ -1090,21 +1090,34 @@ function applyProxy(ctx, config) {
   let nextClientId = 1
 
   /**
-   * 同一台设备的判定顺序：MAC > IP > 系统+型号 > 型号（浏览器不参与判定）。
-   * 换了网络/换了浏览器都只更新原来那条，不再另起一行。
+   * 同一台设备的判定顺序：MAC > IP > 浏览器标识（UA）> 系统+型号（型号要去掉通用名）。
+   * 换了网络（双网络/换 Wi-Fi/切 4G）或换了浏览器版本，都只更新原来那条，不再另起一行。
+   * 注意：安卓/iPhone 的 MAC 常是随机化的，所以 UA 才是「跨网络认出同一台」的主力。
    */
+  const GENERIC_MODEL = new Set(['电脑', 'Android 手机', 'Mac', 'Linux 设备', 'Chromebook', '未知', ''])
+  const sameDevice = (a, cand) => {
+    if (cand.mac && a.mac && a.mac === cand.mac) return true
+    if (cand.ua && cand.ua !== '' && a.ua === cand.ua) return true
+    if (!GENERIC_MODEL.has(cand.device) && !GENERIC_MODEL.has(a.model) && a.model === cand.device && a.system === cand.system) return true
+    return false
+  }
   const findClient = (cand) => {
-    if (cand.mac) {
-      for (const e of seenClients.values()) if (e.mac && e.mac === cand.mac) return e
-    }
     for (const e of seenClients.values()) if (e.ip === cand.ip) return e
-    if (cand.system !== '未知' && cand.device !== '未知') {
-      for (const e of seenClients.values()) if (e.system === cand.system && e.model === cand.device) return e
-    }
-    if (cand.device !== '未知') {
-      for (const e of seenClients.values()) if (e.model === cand.device) return e
-    }
+    for (const e of seenClients.values()) if (sameDevice(e, cand)) return e
     return null
+  }
+  /** 把同一台设备散在别的行里的记录并进来（双网络会留下另一条 IP 行）。 */
+  const absorbDuplicates = (hit) => {
+    for (const [key, other] of [...seenClients]) {
+      if (other === hit) continue
+      if (!sameDevice(other, { mac: hit.mac, ua: hit.ua, device: hit.model, system: hit.system })) continue
+      if (!(other.ips instanceof Map)) other.ips = new Map([[other.ip, other.lastSeen]])
+      for (const [ip, at] of other.ips) if (!hit.ips.has(ip)) hit.ips.set(ip, at)
+      hit.hits += other.hits
+      if (other.firstSeen < hit.firstSeen) hit.firstSeen = other.firstSeen
+      if (!hit.mac && other.mac) hit.mac = other.mac
+      seenClients.delete(key)
+    }
   }
 
   const noteClient = (req) => {
@@ -1130,6 +1143,7 @@ function applyProxy(ctx, config) {
         hit.model = parts.device
         hit.system = parts.system
       }
+      if (hit.ips.size > 1) absorbDuplicates(hit)
       return ip
     }
     const entry = {
@@ -1146,6 +1160,7 @@ function applyProxy(ctx, config) {
       ips: new Map([[ip, now]]),
     }
     seenClients.set(entry.id, entry)
+    if (seenClients.size > 1) absorbDuplicates(entry)
     if (seenClients.size > MAX_SEEN) {
       let oldestKey = ''
       let oldest = Infinity

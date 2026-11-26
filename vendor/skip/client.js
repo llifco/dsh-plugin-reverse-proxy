@@ -178,6 +178,9 @@ window.__ModuleLoader__.load({
 			'.reproxy-lan-clear{border:1px solid var(--dsw-alias-border-l1,#3a3f4b);background:transparent;color:var(--dsw-alias-label-primary,#e6e8ee);border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer}',
 			'.reproxy-lan-clear:hover{border-color:#ff8f8f;color:#ffb3b3}',
 			'.reproxy-lan-clear[disabled]{opacity:.5;cursor:default}',
+			'.reproxy-lan-clear{white-space:nowrap;padding:3px 9px;font-size:11.5px}',
+			'.reproxy-lan-ctl-wrap{flex-wrap:wrap;gap:8px;row-gap:6px}',
+			'.reproxy-lan-ctl-wrap .reproxy-lan-state{font-size:11.5px;white-space:nowrap}',
 			'.reproxy-lan-fwchips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}',
 			'.reproxy-lan-fwchip{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-variant-numeric:tabular-nums;padding:3px 10px;border-radius:999px;background:rgba(139,92,246,.14);border:1px solid rgba(139,92,246,.4);color:#c4b5fd}',
 			'.reproxy-lan-fwchip button{border:none;background:transparent;color:#a5b4fc;cursor:pointer;font-size:12px;padding:0}',
@@ -717,8 +720,8 @@ window.__ModuleLoader__.load({
 								? h('div', { className: 'reproxy-lan-list' },
 									h('div', { className: 'reproxy-lan-meta' }, '还没有记录（有人访问后台后才会出现）'))
 								: h('div', { className: 'reproxy-lan-scroll' }, groupOf(clients)),
-							h('div', { className: 'reproxy-lan-ctl', style: { marginTop: '14px', justifyContent: 'flex-start' } },
-								h('span', { className: 'reproxy-lan-state' }, '黑名单开关（无需求请勿开启）'),
+							h('div', { className: 'reproxy-lan-ctl reproxy-lan-ctl-wrap', style: { marginTop: '14px' } },
+								h('span', { className: 'reproxy-lan-state' }, '黑名单开关'),
 								h('button', {
 									className: 'reproxy-lan-switch' + (blacklistOn ? ' on' : ''),
 									type: 'button',
@@ -733,8 +736,10 @@ window.__ModuleLoader__.load({
 									disabled: clearBusy,
 									title: '清空「最近访问」列表；已加入黑名单的 IP 不会被清除',
 									onClick: clearSeen
-								}, clearBusy ? '清除中…' : '一键清除'),
-								h('span', { className: 'reproxy-lan-state', style: { marginLeft: '18px' } }, '防扫描攻击'),
+								}, clearBusy ? '清除中…' : '一键清除')
+							),
+							h('div', { className: 'reproxy-lan-ctl reproxy-lan-ctl-wrap', style: { marginTop: '8px' } },
+								h('span', { className: 'reproxy-lan-state' }, '防扫描攻击（无需求请勿开启）'),
 								h('button', {
 									className: 'reproxy-lan-switch' + (scanOn ? ' on' : ''),
 									type: 'button',
@@ -742,9 +747,9 @@ window.__ModuleLoader__.load({
 									disabled: scanBusy,
 									title: '开启后识别到扫描/攻击行为会自动把来源 IP 拉黑（Kali 系统直接拉黑）',
 									onClick: toggleScan
-								}, h('i')),
-								h('span', { className: 'reproxy-lan-meta', style: { marginLeft: '8px' } }, '开启后自动拉黑扫描来源（Kali 直接拉黑）')
+								}, h('i'))
 							),
+							h('div', { className: 'reproxy-lan-meta', style: { marginTop: '4px', fontSize: '11.5px', lineHeight: '1.5' } }, '开启后自动拉黑扫描来源（Kali 直接拉黑）；同一局域网设备只记日志、不自动拉黑。'),
 							blockedIps.length === 0 ? null : h('div', { className: 'reproxy-lan-chips reproxy-lan-scroll', style: { flexDirection: 'row', flexWrap: 'wrap' } },
 								blockedIps.map((ip) => h('span', { key: ip, className: 'reproxy-lan-chip' },
 									ip,
