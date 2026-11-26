@@ -796,6 +796,7 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
     ctx.effect(() => webServer.register(routeIpv6))
     ctx.effect(() => webServer.register(routeScan))
     ctx.effect(() => webServer.register(routeClear))
+    ctx.effect(() => webServer.register(routeScanLog))
     ctx.effect(() => webServer.register(routeKey))
     ctx.effect(() => webServer.register(routeForwards))
     ctx.effect(() => webServer.register(routeForwardsEnabled))
@@ -1232,11 +1233,25 @@ function applyProxy(ctx, config) {
   const SCAN_MAX_UNIQ_404 = 40
   const SCAN_MAX_404 = 400
   const SCAN_SKIP_PREFIX = /^\/(?:plugins|assets|api|@\d)/
+  /** 最近 20 条拦截记录（时间/来源/命中规则/UA/路径），内存里滚，重启清空。 */
+  const scanHits = []
+  const SCAN_LOG_MAX = 20
+  const uaByIp = new Map()
+  const noteUa = (ip, ua) => { if (ip && ua) uaByIp.set(ip, String(ua).slice(0, 120)) }
 
-  const scanTrip = (ip, why) => {
+  const scanTrip = (ip, why, path) => {
     try {
       const result = blockIp(ip, 'scan-guard', 'scan')
-      if (result.added) log('warn', '防扫描命中（' + why + '），已自动拉黑：' + ip)
+      scanHits.unshift({
+        at: new Date().toISOString(),
+        ip,
+        why,
+        path: path || '',
+        ua: uaByIp.get(ip) || '',
+      })
+      if (scanHits.length > SCAN_LOG_MAX) scanHits.pop()
+      if (result.added) log('warn', '防扫描命中（' + why + '），已自动拉黑：' + ip
+        + (uaByIp.get(ip) ? ' | UA: ' + uaByIp.get(ip) : '') + (path ? ' | 路径: ' + path : ''))
       scanStats.delete(ip)
     } catch (e) { log('warn', '自动拉黑失败：' + e.message) }
   }
@@ -1254,12 +1269,13 @@ function applyProxy(ctx, config) {
     const st = getLanState()
     if (st.scanGuard !== true) return
     const ua = String((req.headers && req.headers['user-agent']) || '')
+    if (ua !== '') noteUa(ip, ua)
     if (KALI_UA.test(ua)) {
-      if (!isBlocked(ip)) scanTrip(ip, 'Kali 系统指纹')
+      if (!isBlocked(ip)) scanTrip(ip, 'Kali 系统指纹', pathOf(req))
       return
     }
     if (SCAN_UA.test(ua)) {
-      if (!isBlocked(ip)) scanTrip(ip, '扫描器指纹')
+      if (!isBlocked(ip)) scanTrip(ip, '扫描器指纹', pathOf(req))
       return
     }
     const path = pathOf(req)
@@ -1273,7 +1289,7 @@ function applyProxy(ctx, config) {
     rec.last = now
     rec.sens += 1
     rec.uniq.add(path)
-    if (rec.sens >= 2 && !isBlocked(ip)) scanTrip(ip, '探测敏感路径')
+    if (rec.sens >= 2 && !isBlocked(ip)) scanTrip(ip, '探测敏感路径（' + rec.sens + ' 次）', path)
   }
 
   // 第二层：只统计「404 的未知路径」，正常浏览（资源/接口全 200）不会进入统计
@@ -1298,7 +1314,7 @@ function applyProxy(ctx, config) {
     let why = ''
     if (rec.uniq.size >= SCAN_MAX_UNIQ_404) why = '短时间内遍历大量不存在的路径'
     else if (rec.total >= SCAN_MAX_404) why = '短时间大量 404'
-    if (why !== '' && !isBlocked(ip)) scanTrip(ip, why)
+    if (why !== '' && !isBlocked(ip)) scanTrip(ip, why, path)
   }
 
   const BLOCKED_HTML = '<!doctype html><html lang="zh-CN"><meta charset="utf-8">'
@@ -1772,6 +1788,7 @@ function applyProxy(ctx, config) {
   try {
     registerLanControl(ctx, cfg, log, {
       listClients,
+      scanHits: () => scanHits,
       clearSeen: () => {
         const before = seenClients.size
         seenClients.clear()
