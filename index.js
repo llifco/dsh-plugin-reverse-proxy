@@ -1551,36 +1551,42 @@ export async function apply(ctx, config) {
 }
 
 export function describeUa(value) {
-
   const ua = typeof value === 'string' ? value : ''
-  if (ua === '') return ''
-  if (/^curl\//i.test(ua)) return 'curl'
-  if (/python-requests|python\//i.test(ua)) return 'Python 脚本'
-  let device = ''
+  let device = '未知'
+  let browser = '未知'
+  let system = '未知'
+  let m = null
+  if (ua === '') return '设备 未知 · 浏览器 未知 · 系统 未知'
+  if (/^curl\//i.test(ua)) return '设备 命令行 · 浏览器 curl ' + (ua.match(/curl\/([\d.]+)/i) || ['', ''])[1] + ' · 系统 未知'
+  if (/python-requests|python\//i.test(ua)) return '设备 命令行 · 浏览器 Python 脚本 · 系统 未知'
+  // 系统
+  if (/Windows NT 10\.0/.test(ua)) system = 'Windows 10/11'
+  else if ((m = ua.match(/Windows NT ([\d.]+)/))) system = 'Windows ' + m[1]
+  else if ((m = ua.match(/Android[\s/]([\d.]+)/))) system = 'Android ' + m[1]
+  else if ((m = ua.match(/iPhone OS ([\d_]+)/))) system = 'iOS ' + m[1].replace(/_/g, '.')
+  else if (/iPad/.test(ua) && (m = ua.match(/OS ([\d_]+)/))) system = 'iPadOS ' + m[1].replace(/_/g, '.')
+  else if ((m = ua.match(/Mac OS X ([\d_.]+)/))) system = 'macOS ' + m[1].replace(/_/g, '.')
+  else if (/CrOS/.test(ua)) system = 'ChromeOS'
+  else if (/Linux/.test(ua)) system = 'Linux'
+  // 设备
   if (/iPad/i.test(ua)) device = 'iPad'
   else if (/iPhone|iPod/i.test(ua)) device = 'iPhone'
   else if (/Android/i.test(ua)) {
-    const m = ua.match(/Android[^;)]*;\s*([^;)]+?)(?:\s+Build|\s*\))/i)
-    device = 'Android' + (m && m[1] && m[1].length < 28 ? ' ' + m[1].trim() : '')
-  } else if (/Windows NT 10/i.test(ua)) device = 'Windows'
-  else if (/Windows/i.test(ua)) device = 'Windows'
+    const model = ua.match(/Android[^;)]*;\s*([^;()]+?)(?:\s+Build|\s*\))/i)
+    device = model && model[1] && model[1].trim().length < 30 ? model[1].trim() : 'Android 手机'
+  } else if (/Windows/i.test(ua)) device = '电脑'
   else if (/Macintosh|Mac OS X/i.test(ua)) device = 'Mac'
-  else if (/CrOS/i.test(ua)) device = 'ChromeOS'
-  else if (/Linux/i.test(ua)) device = 'Linux'
-  else device = '未知设备'
-  let browser = ''
-  const edg = ua.match(/Edg\/(\d+)/)
-  const chr = ua.match(/Chrome\/(\d+)/)
-  const ff = ua.match(/Firefox\/(\d+)/)
-  const ver = ua.match(/Version\/([\d.]+).*Safari/)
-  if (/MicroMessenger/i.test(ua)) browser = '微信'
-  else if (/QQBrowser|\bQQ\//i.test(ua)) browser = 'QQ'
-  else if (/Edg\//i.test(ua)) browser = 'Edge' + (edg ? ' ' + edg[1] : '')
+  else if (/CrOS/i.test(ua)) device = 'Chromebook'
+  else if (/Linux/i.test(ua)) device = 'Linux 设备'
+  // 浏览器
+  if (/MicroMessenger/i.test(ua)) browser = '微信' + ((m = ua.match(/MicroMessenger\/([\d.]+)/)) ? ' ' + m[1] : '')
+  else if (/QQBrowser|\bQQ\//i.test(ua)) browser = 'QQ 浏览器'
+  else if (/Edg\//i.test(ua)) browser = 'Edge' + ((m = ua.match(/Edg\/(\d+)/)) ? ' ' + m[1] : '')
   else if (/OPR\//i.test(ua)) browser = 'Opera'
-  else if (/Firefox\//i.test(ua)) browser = 'Firefox' + (ff ? ' ' + ff[1] : '')
-  else if (/Chrome\//i.test(ua)) browser = 'Chrome' + (chr ? ' ' + chr[1] : '')
-  else if (/Safari/i.test(ua)) browser = 'Safari' + (ver ? ' ' + ver[1].split('.')[0] : '')
-  return browser === '' ? device : device + ' · ' + browser
+  else if (/Firefox\//i.test(ua)) browser = 'Firefox' + ((m = ua.match(/Firefox\/(\d+)/)) ? ' ' + m[1] : '')
+  else if (/Chrome\//i.test(ua)) browser = 'Chrome' + ((m = ua.match(/Chrome\/(\d+)/)) ? ' ' + m[1] : '')
+  else if (/Safari/i.test(ua)) browser = 'Safari' + ((m = ua.match(/Version\/([\d.]+)/)) ? ' ' + m[1].split('.')[0] : '')
+  return '设备 ' + device + ' · 浏览器 ' + browser + ' · 系统 ' + system
 }
 
 export const name = 'dsh-plugin-reverse-proxy'

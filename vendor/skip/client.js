@@ -425,7 +425,7 @@ window.__ModuleLoader__.load({
 				const renderIpRow = (item) => h('div', { key: item.ip, className: 'reproxy-lan-ip' },
 					h('span', { className: 'reproxy-lan-badge' + (item.private === true ? ' lan' : '') }, item.private === true ? '内网' : '公网'),
 					h('div', { className: 'reproxy-lan-who' },
-						item.mac ? h('div', { className: 'reproxy-lan-mac' }, item.mac) : null,
+						h('div', { className: 'reproxy-lan-mac' }, 'MAC ' + (item.mac || '未知')),
 						h('div', { className: 'reproxy-lan-dev' }, item.device || '未知设备'),
 						h('div', { className: 'reproxy-lan-sub' }, item.ip + ' · 最近 ' + new Date(item.lastSeen).toLocaleTimeString() + ' · 共 ' + item.hits + ' 次')
 					),
