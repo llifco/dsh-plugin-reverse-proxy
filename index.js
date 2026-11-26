@@ -1017,28 +1017,67 @@ function applyProxy(ctx, config) {
 
   const seenClients = new Map()
   const MAX_SEEN = 50
+  let nextClientId = 1
+
+  /**
+   * 同一台设备的判定顺序：MAC > IP > 系统+型号 > 型号（浏览器不参与判定）。
+   * 换了网络/换了浏览器都只更新原来那条，不再另起一行。
+   */
+  const findClient = (cand) => {
+    if (cand.mac) {
+      for (const e of seenClients.values()) if (e.mac && e.mac === cand.mac) return e
+    }
+    for (const e of seenClients.values()) if (e.ip === cand.ip) return e
+    if (cand.system !== '未知' && cand.device !== '未知') {
+      for (const e of seenClients.values()) if (e.system === cand.system && e.model === cand.device) return e
+    }
+    if (cand.device !== '未知') {
+      for (const e of seenClients.values()) if (e.model === cand.device) return e
+    }
+    return null
+  }
 
   const noteClient = (req) => {
     const ip = normalizeIp(req && req.socket ? req.socket.remoteAddress : '')
     if (ip === '') return ''
     const now = Date.now()
     const ua = String((req.headers && (req.headers['user-agent'] || req.headers['User-Agent'])) || '').slice(0, 300)
-    const device = describeUa(ua)
-    const prev = seenClients.get(ip)
-    if (prev) {
-      prev.lastSeen = now
-      prev.hits += 1
-      if (ua !== '') { prev.ua = ua; prev.device = device }
-    } else {
-      seenClients.set(ip, { ip, firstSeen: now, lastSeen: now, hits: 1, ua, device })
-      if (seenClients.size > MAX_SEEN) {
-        let oldestKey = ''
-        let oldest = Infinity
-        for (const [key, value] of seenClients) {
-          if (value.lastSeen < oldest) { oldest = value.lastSeen; oldestKey = key }
-        }
-        if (oldestKey !== '') seenClients.delete(oldestKey)
+    const parts = describeParts(ua)
+    const mac = lookupMac(ip)
+    const hit = findClient({ ip, mac, device: parts.device, system: parts.system })
+    if (hit) {
+      hit.ip = ip
+      hit.lastSeen = now
+      hit.hits += 1
+      if (mac !== '') hit.mac = mac
+      if (ua !== '') {
+        hit.ua = ua
+        hit.device = parts.line
+        hit.model = parts.device
+        hit.system = parts.system
       }
+      return ip
+    }
+    const entry = {
+      id: 'd' + (nextClientId++),
+      ip,
+      mac,
+      firstSeen: now,
+      lastSeen: now,
+      hits: 1,
+      ua,
+      device: parts.line,
+      model: parts.device,
+      system: parts.system,
+    }
+    seenClients.set(entry.id, entry)
+    if (seenClients.size > MAX_SEEN) {
+      let oldestKey = ''
+      let oldest = Infinity
+      for (const [key, value] of seenClients) {
+        if (value.lastSeen < oldest) { oldest = value.lastSeen; oldestKey = key }
+      }
+      if (oldestKey !== '') seenClients.delete(oldestKey)
     }
     return ip
   }
@@ -1046,7 +1085,13 @@ function applyProxy(ctx, config) {
   /** 给设置页看的快照（带 blocked 标记，前端据此决定按钮是「添加」还是「已在黑名单」）。 */
   const listClients = () => [...seenClients.values()]
     .sort((a, b) => b.lastSeen - a.lastSeen)
-    .map((entry) => ({ ...entry, blocked: isBlocked(entry.ip), private: isPrivateIp(entry.ip), device: entry.device || describeUa(entry.ua || ''), mac: lookupMac(entry.ip) }))
+    .map((entry) => ({
+      ...entry,
+      blocked: isBlocked(entry.ip),
+      private: isPrivateIp(entry.ip),
+      device: entry.device || describeUa(entry.ua || ''),
+      mac: entry.mac || lookupMac(entry.ip),
+    }))
 
   const BLOCKED_HTML = '<!doctype html><html lang="zh-CN"><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -1550,16 +1595,15 @@ export async function apply(ctx, config) {
   return applyProxy(ctx, config)
 }
 
-export function describeUa(value) {
+export function describeParts(value) {
   const ua = typeof value === 'string' ? value : ''
   let device = '未知'
   let browser = '未知'
   let system = '未知'
   let m = null
-  if (ua === '') return '设备 未知 · 浏览器 未知 · 系统 未知'
-  if (/^curl\//i.test(ua)) return '设备 命令行 · 浏览器 curl ' + (ua.match(/curl\/([\d.]+)/i) || ['', ''])[1] + ' · 系统 未知'
-  if (/python-requests|python\//i.test(ua)) return '设备 命令行 · 浏览器 Python 脚本 · 系统 未知'
-  // 系统
+  if (ua === '') return { device, browser, system, line: '设备 未知 · 浏览器 未知 · 系统 未知' }
+  if (/^curl\//i.test(ua)) return { device: '命令行', browser: 'curl ' + (ua.match(/curl\/([\d.]+)/i) || ['', ''])[1], system: '未知', line: '设备 命令行 · 浏览器 curl · 系统 未知' }
+  if (/python-requests|python\//i.test(ua)) return { device: '命令行', browser: 'Python 脚本', system: '未知', line: '设备 命令行 · 浏览器 Python 脚本 · 系统 未知' }
   if (/Windows NT 10\.0/.test(ua)) system = 'Windows 10/11'
   else if ((m = ua.match(/Windows NT ([\d.]+)/))) system = 'Windows ' + m[1]
   else if ((m = ua.match(/Android[\s/]([\d.]+)/))) system = 'Android ' + m[1]
@@ -1568,7 +1612,6 @@ export function describeUa(value) {
   else if ((m = ua.match(/Mac OS X ([\d_.]+)/))) system = 'macOS ' + m[1].replace(/_/g, '.')
   else if (/CrOS/.test(ua)) system = 'ChromeOS'
   else if (/Linux/.test(ua)) system = 'Linux'
-  // 设备
   if (/iPad/i.test(ua)) device = 'iPad'
   else if (/iPhone|iPod/i.test(ua)) device = 'iPhone'
   else if (/Android/i.test(ua)) {
@@ -1578,7 +1621,6 @@ export function describeUa(value) {
   else if (/Macintosh|Mac OS X/i.test(ua)) device = 'Mac'
   else if (/CrOS/i.test(ua)) device = 'Chromebook'
   else if (/Linux/i.test(ua)) device = 'Linux 设备'
-  // 浏览器
   if (/MicroMessenger/i.test(ua)) browser = '微信' + ((m = ua.match(/MicroMessenger\/([\d.]+)/)) ? ' ' + m[1] : '')
   else if (/QQBrowser|\bQQ\//i.test(ua)) browser = 'QQ 浏览器'
   else if (/Edg\//i.test(ua)) browser = 'Edge' + ((m = ua.match(/Edg\/(\d+)/)) ? ' ' + m[1] : '')
@@ -1586,7 +1628,11 @@ export function describeUa(value) {
   else if (/Firefox\//i.test(ua)) browser = 'Firefox' + ((m = ua.match(/Firefox\/(\d+)/)) ? ' ' + m[1] : '')
   else if (/Chrome\//i.test(ua)) browser = 'Chrome' + ((m = ua.match(/Chrome\/(\d+)/)) ? ' ' + m[1] : '')
   else if (/Safari/i.test(ua)) browser = 'Safari' + ((m = ua.match(/Version\/([\d.]+)/)) ? ' ' + m[1].split('.')[0] : '')
-  return '设备 ' + device + ' · 浏览器 ' + browser + ' · 系统 ' + system
+  return { device, browser, system, line: '设备 ' + device + ' · 浏览器 ' + browser + ' · 系统 ' + system }
+}
+
+export function describeUa(value) {
+  return describeParts(value).line
 }
 
 export const name = 'dsh-plugin-reverse-proxy'
