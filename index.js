@@ -997,6 +997,24 @@ function applyProxy(ctx, config) {
    * 访问过本反代的设备（只留内存，重启清空）：ip → { ip, firstSeen, lastSeen, hits }。
    * 设置页把这份列表显示出来，点「添加」就把那条 IP 丢进黑名单。
    */
+  // 局域网内能用邻居表（ARP）看到 MAC；跨路由/公网看不到，IPv6 也多半没有。
+  const macCache = new Map()
+  const MAC_TTL = 60 * 1000
+  const lookupMac = (ip) => {
+    if (typeof ip !== 'string' || ip === '' || /:/.test(ip) || !isPrivateIp(ip)) return ''
+    const hit = macCache.get(ip)
+    const now = Date.now()
+    if (hit && now - hit.at < MAC_TTL) return hit.mac
+    let mac = ''
+    try {
+      const out = execFileSync('ip', ['neigh', 'show', ip], { encoding: 'utf8', timeout: 800, stdio: ['ignore', 'pipe', 'ignore'] })
+      const m = out.match(/lladdr\s+([0-9a-f:]{17})/i)
+      if (m) mac = m[1].toLowerCase()
+    } catch (e) { mac = '' }
+    macCache.set(ip, { at: now, mac })
+    return mac
+  }
+
   const seenClients = new Map()
   const MAX_SEEN = 50
 
@@ -1004,12 +1022,15 @@ function applyProxy(ctx, config) {
     const ip = normalizeIp(req && req.socket ? req.socket.remoteAddress : '')
     if (ip === '') return ''
     const now = Date.now()
+    const ua = String((req.headers && (req.headers['user-agent'] || req.headers['User-Agent'])) || '').slice(0, 300)
+    const device = describeUa(ua)
     const prev = seenClients.get(ip)
     if (prev) {
       prev.lastSeen = now
       prev.hits += 1
+      if (ua !== '') { prev.ua = ua; prev.device = device }
     } else {
-      seenClients.set(ip, { ip, firstSeen: now, lastSeen: now, hits: 1 })
+      seenClients.set(ip, { ip, firstSeen: now, lastSeen: now, hits: 1, ua, device })
       if (seenClients.size > MAX_SEEN) {
         let oldestKey = ''
         let oldest = Infinity
@@ -1025,7 +1046,7 @@ function applyProxy(ctx, config) {
   /** 给设置页看的快照（带 blocked 标记，前端据此决定按钮是「添加」还是「已在黑名单」）。 */
   const listClients = () => [...seenClients.values()]
     .sort((a, b) => b.lastSeen - a.lastSeen)
-    .map((entry) => ({ ...entry, blocked: isBlocked(entry.ip), private: isPrivateIp(entry.ip) }))
+    .map((entry) => ({ ...entry, blocked: isBlocked(entry.ip), private: isPrivateIp(entry.ip), device: entry.device || describeUa(entry.ua || ''), mac: lookupMac(entry.ip) }))
 
   const BLOCKED_HTML = '<!doctype html><html lang="zh-CN"><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -1527,6 +1548,39 @@ export async function apply(ctx, config) {
     return applyTrustedConnection(ctx, config)
   }
   return applyProxy(ctx, config)
+}
+
+export function describeUa(value) {
+
+  const ua = typeof value === 'string' ? value : ''
+  if (ua === '') return ''
+  if (/^curl\//i.test(ua)) return 'curl'
+  if (/python-requests|python\//i.test(ua)) return 'Python 脚本'
+  let device = ''
+  if (/iPad/i.test(ua)) device = 'iPad'
+  else if (/iPhone|iPod/i.test(ua)) device = 'iPhone'
+  else if (/Android/i.test(ua)) {
+    const m = ua.match(/Android[^;)]*;\s*([^;)]+?)(?:\s+Build|\s*\))/i)
+    device = 'Android' + (m && m[1] && m[1].length < 28 ? ' ' + m[1].trim() : '')
+  } else if (/Windows NT 10/i.test(ua)) device = 'Windows'
+  else if (/Windows/i.test(ua)) device = 'Windows'
+  else if (/Macintosh|Mac OS X/i.test(ua)) device = 'Mac'
+  else if (/CrOS/i.test(ua)) device = 'ChromeOS'
+  else if (/Linux/i.test(ua)) device = 'Linux'
+  else device = '未知设备'
+  let browser = ''
+  const edg = ua.match(/Edg\/(\d+)/)
+  const chr = ua.match(/Chrome\/(\d+)/)
+  const ff = ua.match(/Firefox\/(\d+)/)
+  const ver = ua.match(/Version\/([\d.]+).*Safari/)
+  if (/MicroMessenger/i.test(ua)) browser = '微信'
+  else if (/QQBrowser|\bQQ\//i.test(ua)) browser = 'QQ'
+  else if (/Edg\//i.test(ua)) browser = 'Edge' + (edg ? ' ' + edg[1] : '')
+  else if (/OPR\//i.test(ua)) browser = 'Opera'
+  else if (/Firefox\//i.test(ua)) browser = 'Firefox' + (ff ? ' ' + ff[1] : '')
+  else if (/Chrome\//i.test(ua)) browser = 'Chrome' + (chr ? ' ' + chr[1] : '')
+  else if (/Safari/i.test(ua)) browser = 'Safari' + (ver ? ' ' + ver[1].split('.')[0] : '')
+  return browser === '' ? device : device + ' · ' + browser
 }
 
 export const name = 'dsh-plugin-reverse-proxy'

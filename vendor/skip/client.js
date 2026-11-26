@@ -155,6 +155,10 @@ window.__ModuleLoader__.load({
 			'.reproxy-lan-grouphead{display:flex;align-items:center;gap:8px;margin:2px 0 2px}',
 			'.reproxy-lan-badge{flex:none;font-size:11px;line-height:1;padding:4px 8px;border-radius:999px;border:1px solid rgba(139,92,246,.5);color:#c4b5fd;background:rgba(139,92,246,.12)}',
 			'.reproxy-lan-badge.lan{border-color:rgba(94,224,138,.45);color:#8fe6b0;background:rgba(94,224,138,.1)}',
+			'.reproxy-lan-who{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}',
+			'.reproxy-lan-mac{font-size:10.5px;line-height:1.2;color:#8b93a7;letter-spacing:.02em}',
+			'.reproxy-lan-dev{font-size:12.5px;line-height:1.3;color:#e6e8ee;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+			'.reproxy-lan-sub{font-size:11px;line-height:1.3;color:#ff7b72}',
 			'.reproxy-lan-addr{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px;padding:4px 0}',
 			'.reproxy-lan-url{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;color:var(--dsw-alias-label-primary,#e6e8ee);word-break:break-all}',
 			'.reproxy-lan-url.lan{color:#8fe6b0}',
@@ -420,8 +424,11 @@ window.__ModuleLoader__.load({
 				// 每行自己带「公网 / 内网」标签（用户要的排法：标签在 IP 前，末尾「添加」）
 				const renderIpRow = (item) => h('div', { key: item.ip, className: 'reproxy-lan-ip' },
 					h('span', { className: 'reproxy-lan-badge' + (item.private === true ? ' lan' : '') }, item.private === true ? '内网' : '公网'),
-					h('span', { style: { minWidth: '116px' } }, item.ip),
-					h('span', { className: 'reproxy-lan-meta' }, '最近 ' + new Date(item.lastSeen).toLocaleTimeString() + ' · 共 ' + item.hits + ' 次'),
+					h('div', { className: 'reproxy-lan-who' },
+						item.mac ? h('div', { className: 'reproxy-lan-mac' }, item.mac) : null,
+						h('div', { className: 'reproxy-lan-dev' }, item.device || '未知设备'),
+						h('div', { className: 'reproxy-lan-sub' }, item.ip + ' · 最近 ' + new Date(item.lastSeen).toLocaleTimeString() + ' · 共 ' + item.hits + ' 次')
+					),
 					h('button', {
 						className: 'reproxy-lan-add',
 						type: 'button',

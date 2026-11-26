@@ -232,7 +232,10 @@ The master switch card also carries a **Contact the author** button (QQ group 10
 
 ### 7. Access IPs and blacklist (off by default)
 
-- Lists every device that recently hit the port (IP, last seen, request count).
+- Lists every device that recently hit the port. Each row shows a tiny grey **MAC** when we can see it
+  (only for IPv4 devices on the same L2 segment — never across a router or from the internet), the
+  **device model** parsed from User-Agent (`Windows · Edge 154`, `iPhone · Safari 18`,
+  `Android PJZ110 · Chrome 131`, `微信`…), and the **IP · last seen · request count** in small red text.
 - **Add** drops that IP into the blacklist; the device then gets a 403 page until you remove it.
 - A **blacklist switch** sits right below the list ("no need, do not enable") — turning it off stops blocking but keeps the list.
 - Adding the same IP twice is a no-op (`added:false`); loopback and the device you are currently using cannot be blocked (HTTP 400), so you cannot lock yourself out.
