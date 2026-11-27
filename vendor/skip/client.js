@@ -121,6 +121,7 @@ window.__ModuleLoader__.load({
 		const STYLE = [
 			'.reproxy-lan{display:flex;flex-direction:column;gap:14px;padding:4px 0}',
 			'.reproxy-lan-row{display:flex;align-items:center;justify-content:space-between;gap:16px;border:1px solid var(--dsw-alias-border-l1,#333947);border-radius:10px;padding:14px 16px}',
+			'.reproxy-lan-card{display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;gap:8px}',
 			'.reproxy-lan-ctl{flex:none;display:flex;align-items:center;gap:10px}',
 			'.reproxy-lan-state{font-size:12px;color:var(--dsw-alias-label-secondary,#9aa0ad);white-space:nowrap}',
 			'.reproxy-lan-title{font-size:14px;font-weight:600;color:var(--dsw-alias-label-primary,#e6e8ee)}',
@@ -255,6 +256,7 @@ window.__ModuleLoader__.load({
 			function Panel() {
 				const [state, setState] = React.useState(null);
 				const [asking, setAsking] = React.useState(false);
+				const [sponsor, setSponsor] = React.useState(false);
 				const [busy, setBusy] = React.useState(false);
 				const [error, setError] = React.useState('');
 				const [portDraft, setPortDraft] = React.useState('');
@@ -263,6 +265,7 @@ window.__ModuleLoader__.load({
 				const [portBad, setPortBad] = React.useState(false);
 				const [clients, setClients] = React.useState([]);
 				const [blacklistOn, setBlacklistOn] = React.useState(false);
+				const [whiteBusy, setWhiteBusy] = React.useState(false);
 				const [scanOn, setScanOn] = React.useState(false);
 				const [scanBusy, setScanBusy] = React.useState(false);
 				const [clearBusy, setClearBusy] = React.useState(false);
@@ -436,6 +439,40 @@ window.__ModuleLoader__.load({
 						setIpMsg(body.blacklistEnabled ? '黑名单已打开' : '黑名单已关闭（名单保留）');
 					}).catch((e) => { setIpBad(true); setIpMsg(String((e && e.message) || e)); }).then(() => setIpBusy(''));
 				};
+				const toggleWhitelist = () => {
+					setWhiteBusy(true);
+					setIpMsg('');
+					setIpBad(false);
+					fetch('/reproxy-lan/whitelist/enabled', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({ enabled: !(state && state.whitelistEnabled === true) })
+					})
+						.then((r) => r.json())
+						.then((body) => {
+							if (!body || body.ok !== true) throw new Error((body && body.error) || '保存失败');
+							setState(body);
+							setClients(Array.isArray(body.clients) ? body.clients : []);
+							setIpMsg(body.whitelistEnabled === true ? '白名单模式已打开：只放行名单里的设备（黑名单自动关）' : '白名单模式已关闭（名单保留）');
+						})
+						.catch((e) => { setIpBad(true); setIpMsg(String((e && e.message) || e)); })
+						.then(() => setWhiteBusy(false));
+				};
+				const removeWhite = (ip) => {
+					setIpBusy('u:' + ip);
+					setIpMsg('');
+					setIpBad(false);
+					fetch('/reproxy-lan/unwhite', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ip }) })
+						.then((r) => r.json())
+						.then((body) => {
+							if (!body || body.ok !== true) throw new Error((body && body.error) || '移除失败');
+							setState(body);
+							setClients(Array.isArray(body.clients) ? body.clients : []);
+							setIpMsg(ip + ' 已移出白名单');
+						})
+						.catch((e) => { setIpBad(true); setIpMsg(String((e && e.message) || e)); })
+						.then(() => setIpBusy(''));
+				};
 				const clearSeen = () => {
 					setClearBusy(true);
 					setIpMsg('');
@@ -446,7 +483,7 @@ window.__ModuleLoader__.load({
 							if (!body || body.ok !== true) throw new Error((body && body.error) || '清除失败');
 							setState(body);
 							setClients(Array.isArray(body.clients) ? body.clients : []);
-							setIpMsg('已清除 ' + (body.cleared || 0) + ' 条访问记录（黑名单里的 IP 保留）');
+							setIpMsg('已清除 ' + (body.cleared || 0) + ' 条访问记录（黑名单和白名单都保留）');
 						})
 						.catch((e) => { setIpBad(true); setIpMsg(String((e && e.message) || e)); })
 						.then(() => setClearBusy(false));
@@ -484,7 +521,7 @@ window.__ModuleLoader__.load({
 					return b;
 				}));
 				// 每行自己带「公网 / 内网」标签（用户要的排法：标签在 IP 前，末尾「添加」）
-				const renderIpRow = (item) => h('div', { key: item.ip, className: 'reproxy-lan-ip' },
+				const renderIpRow = (item, mode) => h('div', { key: (mode || 'b') + item.ip, className: 'reproxy-lan-ip' },
 					h('span', { className: 'reproxy-lan-badge' + (item.private === true ? ' lan' : '') }, item.private === true ? '内网' : '公网'),
 					h('div', { className: 'reproxy-lan-who' },
 						h('div', { className: 'reproxy-lan-mac' }, 'MAC ' + (item.mac || '未知')),
@@ -495,30 +532,34 @@ window.__ModuleLoader__.load({
 							: null
 					),
 					item.scan === true ? h('span', { className: 'reproxy-lan-tag-scan' }, '攻击行为') : null,
-					item.whitelisted === true
-						? h('span', { className: 'reproxy-lan-tag-white' }, '白名单')
-						: h('button', {
-							className: 'reproxy-lan-add reproxy-lan-add-white',
-							type: 'button',
-							disabled: ipBusy === ('w:' + item.ip),
-							title: '加入永久白名单：不再被黑名单和防扫描拦',
-							onClick: () => applyWhitelist(item.ip)
-						}, ipBusy === ('w:' + item.ip) ? '加入中…' : '白名单'),
-					h('button', {
-						className: 'reproxy-lan-add',
-						type: 'button',
-						disabled: item.blocked || item.whitelisted === true || ipBusy === item.ip,
-						onClick: () => applyBlock(item.ip)
-					}, item.whitelisted === true ? '白名单' : (item.blocked ? '已在黑名单' : (ipBusy === item.ip ? '添加中…' : '添加')))
+					mode === 'w'
+						? (item.whitelisted === true
+							? h('span', { className: 'reproxy-lan-tag-white' }, '白名单')
+							: h('button', {
+								className: 'reproxy-lan-add reproxy-lan-add-white',
+								type: 'button',
+								disabled: ipBusy === ('w:' + item.ip),
+								title: '加入永久白名单：不再被黑名单和防扫描拦',
+								onClick: () => applyWhitelist(item.ip)
+							}, ipBusy === ('w:' + item.ip) ? '加入中…' : '白名单'))
+						: (item.whitelisted === true
+							? null
+							: h('button', {
+								className: 'reproxy-lan-add',
+								type: 'button',
+								disabled: item.blocked || ipBusy === item.ip,
+								title: '把这个 IP 拉进黑名单',
+								onClick: () => applyBlock(item.ip)
+							}, item.blocked ? '已在黑名单' : (ipBusy === item.ip ? '添加中…' : '添加')))
 				);
 				// 公网排前面、内网排后面，行内各自带标签，不再分两段标题
-				const groupOf = (list) => {
+				const groupOf = (list, mode) => {
 					const pub = list.filter((item) => item.private !== true);
 					const lan = list.filter((item) => item.private === true);
 					if (list.length === 0) {
-						return [h('div', { key: 'empty', className: 'reproxy-lan-empty' }, '暂时没有记录')];
+						return [h('div', { key: 'empty' + (mode || ''), className: 'reproxy-lan-empty' }, '暂时没有记录')];
 					}
-					return pub.concat(lan).map(renderIpRow);
+					return pub.concat(lan).map((item) => renderIpRow(item, mode));
 				};
 				const setPubMsg2 = (text) => { setPubMsg(text || ''); setPubBad(true); };
 				const on = !!(state && state.lanAccess);
@@ -539,7 +580,15 @@ window.__ModuleLoader__.load({
 								href: 'https://qm.qq.com/q/X5L0ZDvCYc',
 								target: '_blank',
 								rel: 'noopener noreferrer'
-							}, '联系插件官方作者')
+							}, '联系插件官方作者'),
+							h('button', {
+								className: 'reproxy-lan-link',
+								style: { marginTop: '10px', marginLeft: '8px' },
+								type: 'button',
+								onClick: () => setSponsor(true)
+							}, '赞助作者'),
+							h('div', { className: 'reproxy-lan-meta', style: { marginTop: '8px', fontSize: '11.5px', lineHeight: '1.6' } },
+								'自愿赞助，插件依然免费使用。作者为了做出现在这个效果花了很多时间，可以的话支持一下吧，非常感谢。')
 						),
 						h('div', { className: 'reproxy-lan-ctl' },
 							h('span', { className: 'reproxy-lan-state' }, state === null ? '' : (on ? '已开启' : '已关闭')),
@@ -595,52 +644,7 @@ window.__ModuleLoader__.load({
 							}, portBusy ? '保存中…' : '保存')
 						)
 					),
-					h('div', { className: 'reproxy-lan-row' },
-						h('div', { style: { width: '100%', minWidth: 0 } },
-							h('div', { className: 'reproxy-lan-title' }, '公网访问'),
-							h('div', { className: 'reproxy-lan-desc' }, '默认只放行局域网地址，公网 IP 会被拦下（403）。要允许公网访问，请开启这个开关并填写访问密钥——开启后访问地址会变成 http://<公网IP>:' + port + '/<访问密钥>，不知道密钥的人打开只会看到 404。'),
-							state && state.publicAccess ? h('div', { className: 'reproxy-lan-meta', style: { marginTop: '10px' } }, '当前访问地址：http://<公网IP>:' + port + (state.accessPath || '/<访问密钥>')) : null,
-							h('div', { className: 'reproxy-lan-port', style: { marginTop: '12px' } },
-								h('button', {
-									className: 'reproxy-lan-random',
-									type: 'button',
-									title: '生成一个 12 位随机访问密钥',
-									disabled: pubBusy || state === null,
-									onClick: () => { setKeyDraft(randomKey()); setPubMsg(''); setPubBad(false); }
-								}, '随机'),
-								h('input', {
-									className: 'reproxy-lan-input',
-									style: { width: '180px', textAlign: 'left' },
-									type: 'text',
-									value: keyDraft,
-									disabled: pubBusy || state === null,
-									placeholder: state && state.hasKey ? ('已设置，' + String(state.keyHint || '') + '，输入新的可更换') : '访问密钥（至少 5 位）',
-									onChange: (e) => { setKeyDraft(e.target.value); setPubMsg(''); setPubBad(false); }
-								}),
-								h('button', {
-									className: 'reproxy-lan-save',
-									type: 'button',
-									disabled: pubBusy || state === null,
-									onClick: () => applyPublic(true)
-								}, pubBusy ? '保存中…' : '保存并开启')
-							),
-							h('div', { className: 'reproxy-lan-ctl', style: { marginTop: '14px', justifyContent: 'flex-start' } },
-								h('span', { className: 'reproxy-lan-state' }, '公网开关（无需求请勿开启）'),
-								h('button', {
-									className: 'reproxy-lan-switch' + (state && state.publicAccess ? ' on' : ''),
-									type: 'button',
-									'aria-pressed': state && state.publicAccess ? 'true' : 'false',
-									// 总开关没开时端口只绑 127.0.0.1，公网开了也进不来 —— 干脆不让点
-									disabled: pubBusy || state === null || !on,
-									title: !on ? '先打开上面的「局域网访问」总开关' : (state && state.publicAccess ? '点击关闭公网访问' : '点击开启公网访问（需先填密钥）'),
-									onClick: () => (on ? applyPublic(!(state && state.publicAccess === true)) : setPubMsg2('请先打开上面的「局域网访问」总开关，公网访问才有意义。'))
-								}, h('i'))
-							),
-							on ? null : h('div', { className: 'reproxy-lan-meta', style: { marginTop: '6px' } }, '总开关关着时端口只监听 127.0.0.1，公网开关点不动 —— 先打开上面的「局域网访问」。'),
-							pubMsg === '' ? null : h('div', { className: pubBad ? 'reproxy-lan-err' : 'reproxy-lan-ok', style: { marginTop: '8px' } }, pubMsg)
-						)
-					),
-					h('div', { className: 'reproxy-lan-row' },
+					h('div', { className: 'reproxy-lan-row reproxy-lan-card' },
 						h('div', { style: { width: '100%', minWidth: 0 } },
 							h('div', { className: 'reproxy-lan-title' }, '额外端口转发'),
 							h('div', { className: 'reproxy-lan-desc' }, '有些插件/服务只监听 127.0.0.1（比如自己的小面板、别的 Web 工具），外面进不去。把它的端口填进来点「添加」，就能从外面访问了——注意走的是路径，不是另开一个端口：http://<机器IP>:<上面那个端口>/@18787/ 。公网那边按「公网访问」的规则走（开了要密钥，没开只有内网能进）。最多 12 个，8080 和本端口不能填。'),
@@ -719,34 +723,23 @@ window.__ModuleLoader__.load({
 							fwdMsg === '' ? null : h('div', { className: fwdBad ? 'reproxy-lan-err' : 'reproxy-lan-ok', style: { marginTop: '8px' } }, fwdMsg)
 						)
 					),
-					h('div', { className: 'reproxy-lan-row' },
-						h('div', { style: { width: '100%', minWidth: 0 } },
-							h('div', { className: 'reproxy-lan-title' }, '外部访问地址'),
-							h('div', { className: 'reproxy-lan-desc' }, '这台机器现在能怎么访问进来：内网/公网、IPv4/IPv6 各一条，加上你添加的每个插件端口一条，端口按你设的实时值拼，开关一改就跟着变。点「复制」拿走整条地址。'),
-							h('div', { className: 'reproxy-lan-list', style: { marginTop: '10px' } },
-								addresses.length === 0
-									? h('div', { className: 'reproxy-lan-meta' }, '正在读取地址…')
-									: addresses.map((row) => h('div', { className: 'reproxy-lan-addr', key: row.id },
-										h('span', { className: 'reproxy-lan-badge' + (String(row.id).indexOf('lan') === 0 ? ' lan' : '') }, row.label),
-										row.url
-											? h('code', { className: 'reproxy-lan-url' + (String(row.id).indexOf('lan') === 0 ? ' lan' : '') }, row.url)
-											: h('span', { className: 'reproxy-lan-empty', style: { flex: '1 1 100%' } }, row.hint || '没有可用地址'),
-										row.url
-											? h('button', { className: 'reproxy-lan-add', type: 'button', onClick: () => copyRow(row) }, copied === row.id ? '已复制' : '复制')
-											: null
-									))
+					h('div', { className: 'reproxy-lan-row reproxy-lan-card' },
+						h('div', { className: 'reproxy-lan-title' }, '黑名单'),
+						h('div', { className: 'reproxy-lan-desc' }, '黑名单模式：这些 IP 会被拦（403），其它设备照常进。与白名单互斥——开白名单这里自动关；一键清除不会动这份名单。'),
+						blockedIps.length === 0
+							? h('div', { className: 'reproxy-lan-meta' }, '名单是空的')
+							: h('div', { className: 'reproxy-lan-chips reproxy-lan-scroll', style: { flexDirection: 'row', flexWrap: 'wrap' } },
+								blockedIps.map((ip) => h('span', { key: ip, className: 'reproxy-lan-chip' },
+									ip,
+									scanBlockedIps.indexOf(ip) !== -1 ? h('span', { className: 'reproxy-lan-tag-scan' }, '攻击行为') : null,
+									h('button', { type: 'button', disabled: ipBusy === ip, onClick: () => removeBlock(ip) }, ipBusy === ip ? '…' : '移除')
+								))
 							),
-							h('div', { className: 'reproxy-lan-meta', style: { marginTop: '8px' } }, '如果点「复制」没反应，请长按上面的地址手动复制。'),
-							copied === 'fail' ? h('div', { className: 'reproxy-lan-err', style: { marginTop: '6px' } }, '浏览器不让复制，请长按地址手动复制。') : null
-						)
-					),
-					h('div', { className: 'reproxy-lan-row' },
-						h('div', { style: { width: '100%', minWidth: 0 } },
-							h('div', { className: 'reproxy-lan-title' }, '访问 IP'),
-							h('div', { className: 'reproxy-lan-desc' }, '最近连过这个端口的设备。点「添加」把它的 IP 拉进黑名单：被拉黑的设备再打开后台只会看到 403，直到你在这里移除。'),
 							clients.length === 0
-								? h('div', { className: 'reproxy-lan-list' },
-									h('div', { className: 'reproxy-lan-meta' }, '还没有记录（有人访问后台后才会出现）'))
+								? null
+								: h('div', { className: 'reproxy-lan-meta' }, '最近连过这个端口的设备：点「添加」把它的 IP 拉进黑名单（被拉黑的设备只看到 403，直到在这里移除）。'),
+							clients.length === 0
+								? h('div', { className: 'reproxy-lan-empty' }, '还没有记录（有人访问后台后才会出现）')
 								: h('div', { className: 'reproxy-lan-scroll' }, groupOf(clients)),
 							h('div', { className: 'reproxy-lan-ctl reproxy-lan-ctl-wrap', style: { marginTop: '14px' } },
 								h('span', { className: 'reproxy-lan-state' }, '黑名单开关'),
@@ -779,32 +772,39 @@ window.__ModuleLoader__.load({
 							),
 							h('div', { className: 'reproxy-lan-meta', style: { marginTop: '4px', fontSize: '11.5px', lineHeight: '1.5' } }, '开启后自动拉黑扫描来源（Kali 直接拉黑）；同一局域网设备只记日志、不自动拉黑。'),
 							ipMsg ? h('div', { className: ipBad ? 'reproxy-lan-err' : 'reproxy-lan-ok', style: { marginTop: '8px' } }, ipMsg) : null
-						)
 					),
-					h('div', { className: 'reproxy-lan-row' },
-						h('div', { className: 'reproxy-lan-title' }, '黑名单'),
-						h('div', { className: 'reproxy-lan-desc' }, '这些 IP 现在会被拦（403）。点「移除」放出来；一键清除不会动这里。'),
-						blockedIps.length === 0
-							? h('div', { className: 'reproxy-lan-meta' }, '名单是空的')
-							: h('div', { className: 'reproxy-lan-chips reproxy-lan-scroll', style: { flexDirection: 'row', flexWrap: 'wrap' } },
-								blockedIps.map((ip) => h('span', { key: ip, className: 'reproxy-lan-chip' },
-									ip,
-									scanBlockedIps.indexOf(ip) !== -1 ? h('span', { className: 'reproxy-lan-tag-scan' }, '攻击行为') : null,
-									h('button', { type: 'button', disabled: ipBusy === ip, onClick: () => removeBlock(ip) }, ipBusy === ip ? '…' : '移除')
-								))
-							)
-					),
-					h('div', { className: 'reproxy-lan-row' },
+					h('div', { className: 'reproxy-lan-row reproxy-lan-card' },
 						h('div', { className: 'reproxy-lan-title' }, '白名单'),
-						h('div', { className: 'reproxy-lan-desc' }, '永久白名单：不管黑名单、防扫描开关是开是关，这里的主机都不会被拦。加入后不能在这里移除（要清空只能恢复默认配置）。'),
-						whitelistIps.length === 0
-							? h('div', { className: 'reproxy-lan-meta' }, '还没有白名单主机（在上面「访问 IP」里点「白名单」加入）')
-							: h('div', { className: 'reproxy-lan-chips reproxy-lan-scroll', style: { flexDirection: 'row', flexWrap: 'wrap' } },
-								whitelistIps.map((ip) => h('span', { key: ip, className: 'reproxy-lan-chip reproxy-lan-chip-white' },
+						h('div', { className: 'reproxy-lan-desc' }, '白名单模式：名单里的设备才能进后台，不在名单里的一律 403。本机 127.0.0.1 永久在白名单、不能移除。与上面的黑名单互斥——开一个另一个自动关；一键清除只清「最近访问」，不动这份名单。'),
+						h('div', { className: 'reproxy-lan-chips reproxy-lan-scroll', style: { flexDirection: 'row', flexWrap: 'wrap' } },
+								[h('span', { key: '__local', className: 'reproxy-lan-chip reproxy-lan-chip-white' },
+									'127.0.0.1',
+									h('span', { className: 'reproxy-lan-tag-white' }, '本机 · 永久')
+								)].concat(whitelistIps.filter((ip) => ip !== '127.0.0.1').map((ip) => h('span', { key: ip, className: 'reproxy-lan-chip reproxy-lan-chip-white' },
 									ip,
-									h('span', { className: 'reproxy-lan-tag-white' }, '白名单')
-								))
-							)
+									h('span', { className: 'reproxy-lan-tag-white' }, '白名单'),
+									h('button', { type: 'button', disabled: ipBusy === ('u:' + ip), onClick: () => removeWhite(ip) }, ipBusy === ('u:' + ip) ? '…' : '移除')
+								)))
+							),
+						clients.length === 0
+							? null
+							: h('div', { className: 'reproxy-lan-meta' }, '从访问记录里挑：点「白名单」加到上面那份名单里'),
+						clients.length === 0
+							? null
+							: h('div', { className: 'reproxy-lan-scroll' }, groupOf(clients, 'w')),
+						h('div', { className: 'reproxy-lan-ctl', style: { marginTop: '8px' } },
+							h('span', { className: 'reproxy-lan-state' }, '白名单开关（只放行名单里的设备）'),
+							h('button', {
+								className: 'reproxy-lan-switch' + (state && state.whitelistEnabled === true ? ' on' : ''),
+								type: 'button',
+								'aria-pressed': state && state.whitelistEnabled === true ? 'true' : 'false',
+								disabled: whiteBusy,
+								title: '打开＝只放行名单里的设备（本机永远放行），并把黑名单关掉',
+								onClick: toggleWhitelist
+							}, h('i'))
+						),
+						h('div', { className: 'reproxy-lan-meta', style: { marginTop: '4px', fontSize: '11.5px', lineHeight: '1.5' } },
+							state && state.whitelistEnabled === true ? '当前开着：只有名单里的设备能进后台，其它设备一律 403。' : '当前关着：名单保留但不生效，所有设备照常访问。')
 					),
 					portMsg ? h('div', { className: portBad ? 'reproxy-lan-err' : 'reproxy-lan-ok' }, portMsg) : null,
 					h('div', { className: 'reproxy-lan-meta' }, status),
@@ -817,6 +817,22 @@ window.__ModuleLoader__.load({
 						'手机和电脑各开一个、或其中一个用无痕窗口，都不受影响。'
 					),
 					error ? h('div', { className: 'reproxy-lan-err' }, error) : null,
+					sponsor ? h('div', {
+						className: 'reproxy-lan-mask',
+						onClick: () => setSponsor(false),
+						style: { cursor: 'zoom-out', padding: '24px' }
+					}, h('img', {
+						src: '/reproxy-lan/sponsor',
+						alt: '赞助作者的赞赏码',
+						style: {
+							maxWidth: 'min(520px, 92vw)',
+							maxHeight: '86vh',
+							borderRadius: '14px',
+							boxShadow: '0 24px 64px rgba(0,0,0,.55)',
+							display: 'block'
+						},
+						onClick: (e) => { if (e && e.stopPropagation) e.stopPropagation() }
+					})) : null,
 					askV6 ? h('div', { className: 'reproxy-lan-mask' },
 						h('div', { className: 'reproxy-lan-card' },
 							h('h3', null, IPV6_WARNING_TITLE),
