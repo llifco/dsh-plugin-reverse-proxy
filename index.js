@@ -37,6 +37,9 @@ import {
   PUBLIC_WARNING_TEXT,
   isBlocked,
   isScanBlocked,
+  isWhitelisted,
+  addWhitelist,
+  blockIps,
   normalizeIp,
   resetConfig,
   setScanGuard,
@@ -505,6 +508,32 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
   }
 
 
+  /** 永久白名单：加进去就不再拦、也不会被防扫描拉黑（不受任何开关影响）。 */
+  const routeWhitelist = {
+    kind: 'exact',
+    path: '/reproxy-lan/whitelist',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { ok: false, error: '只支持 POST' })
+        return
+      }
+      let body
+      try {
+        body = await readBody(req)
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+        return
+      }
+      try {
+        const result = addWhitelist(body.ip, 'settings')
+        log('info', '加入永久白名单：' + result.ip + (result.added ? '' : '（本来就在）'))
+        sendJson(res, 200, withClients({ ...describeLanState(), added: result.added, ip: result.ip }))
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+      }
+    },
+  }
+
   /** 防扫描攻击开关（开启时顺带打开黑名单总开关）。 */
   const routeScan = {
     kind: 'exact',
@@ -547,6 +576,9 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
       const before = seenClients.size
       seenClients.clear()
       scanStats.clear()
+      // 清空后两张卡片都变空（黑名单的「本次还没访问」占位行也一起藏起来，
+      // 等这些 IP 下次真的访问再出现）；黑名单/白名单的存储本身不动。
+      suppressBlockedRows = true
       log('info', '设置页一键清除访问记录：' + before + ' 条')
       sendJson(res, 200, withClients({ ...describeLanState(), cleared: before }))
     },
@@ -808,6 +840,7 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
     ctx.effect(() => webServer.register(routeUnblock))
     ctx.effect(() => webServer.register(routePublic))
     ctx.effect(() => webServer.register(routeIpv6))
+    ctx.effect(() => webServer.register(routeWhitelist))
     ctx.effect(() => webServer.register(routeScan))
     ctx.effect(() => webServer.register(routeClear))
     ctx.effect(() => webServer.register(routeScanLog))
@@ -1012,6 +1045,18 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
           return { kind: 'error', text: e.message }
         }
       }
+      if (arg.startsWith('white ')) {
+        const ip = arg.slice(6).trim()
+        try {
+          const result = addWhitelist(ip, 'chat')
+          return { kind: 'success', text: result.ip + (result.added ? ' 已加入永久白名单（不再被拦）。' : ' 本来就在白名单里。') }
+        } catch (e) {
+          return { kind: 'error', text: e.message }
+        }
+      }
+      if (arg === 'white') {
+        return { kind: 'info', text: '用法：/lan white <IP> —— 加入永久白名单（不受黑名单/防扫描影响，不能单独移除）' }
+      }
       if (arg === 'clear' || arg === 'clear seen') {
         const before = typeof extra.clearSeen === 'function' ? extra.clearSeen() : 0
         return { kind: 'success', text: '已清除 ' + before + ' 条访问记录（黑名单里的 IP 保持不变）。' }
@@ -1101,6 +1146,8 @@ function applyProxy(ctx, config) {
   }
 
   const seenClients = new Map()
+  // 一键清除后先别把黑名单的占位行显示回来，等这些 IP 下次真的访问
+  let suppressBlockedRows = false
   const MAX_SEEN = 50
   let nextClientId = 1
 
@@ -1142,6 +1189,7 @@ function applyProxy(ctx, config) {
     const ua = String((req.headers && (req.headers['user-agent'] || req.headers['User-Agent'])) || '').slice(0, 300)
     const parts = describeParts(ua)
     const mac = lookupMac(ip)
+    if (suppressBlockedRows && getLanState().blockedIps.includes(ip)) suppressBlockedRows = false
     const hit = findClient({ ip, mac, device: parts.device, system: parts.system })
     if (hit) {
       hit.ip = ip
@@ -1205,6 +1253,7 @@ function applyProxy(ctx, config) {
           ips: undefined,
           multiIps: multiIps.length > 1 ? multiIps : [],
           blocked: isBlocked(entry.ip),
+          whitelisted: isWhitelisted(entry.ip),
           scan: isScanBlocked(entry.ip),
           private: isPrivateIp(entry.ip),
           device: entry.device || describeUa(entry.ua || ''),
@@ -1214,6 +1263,7 @@ function applyProxy(ctx, config) {
     // 黑名单里但这次还没访问过的 IP 也列出来，否则「一键清除」后它们会从界面上消失
     for (const ip of st.blockedIps) {
       if (seen.has(ip)) continue
+      if (suppressBlockedRows) continue
       rows.push({
         id: 'blocked-' + ip,
         ip,
@@ -1227,6 +1277,7 @@ function applyProxy(ctx, config) {
         system: '未知',
         multiIps: [],
         blocked: true,
+        whitelisted: false,
         scan: isScanBlocked(ip),
         private: isPrivateIp(ip),
       })
@@ -1253,18 +1304,29 @@ function applyProxy(ctx, config) {
   const uaByIp = new Map()
   const noteUa = (ip, ua) => { if (ip && ua) uaByIp.set(ip, String(ua).slice(0, 120)) }
 
+  const deviceIpsOf = (ip) => {
+    for (const entry of seenClients.values()) {
+      if (entry.ip === ip) return Array.from(entry.ips.keys())
+    }
+    return [ip]
+  }
+
   const scanTrip = (ip, why, path) => {
     try {
-      const result = blockIp(ip, 'scan-guard', 'scan')
+      if (isWhitelisted(ip)) return
+      // 同一台设备（双网络等）的其它 IP 一起拉黑，避免换个网络就绕过去
+      const targets = deviceIpsOf(ip)
+      const result = blockIps(targets, 'scan-guard', 'scan')
       scanHits.unshift({
         at: new Date().toISOString(),
         ip,
         why,
         path: path || '',
         ua: uaByIp.get(ip) || '',
+        ips: targets,
       })
       if (scanHits.length > SCAN_LOG_MAX) scanHits.pop()
-      if (result.added) log('warn', '防扫描命中（' + why + '），已自动拉黑：' + ip
+      if (result.added.length > 0) log('warn', '防扫描命中（' + why + '），已自动拉黑：' + result.added.join(', ')
         + (uaByIp.get(ip) ? ' | UA: ' + uaByIp.get(ip) : '') + (path ? ' | 路径: ' + path : ''))
       scanStats.delete(ip)
     } catch (e) { log('warn', '自动拉黑失败：' + e.message) }
@@ -1476,12 +1538,13 @@ function applyProxy(ctx, config) {
 
   const onRequest = (req, res) => {
     const clientIp = noteClient(req)
-    if (clientIp !== '') {
+    const clientWhite = clientIp !== '' && isWhitelisted(clientIp)
+    if (clientIp !== '' && !clientWhite) {
       scanHead(req, clientIp)
       const scanPath = pathOf(req)
       res.on('finish', () => { try { scanFinish(clientIp, scanPath, res.statusCode) } catch { /* 忽略 */ } })
     }
-    if (clientIp !== '' && isBlocked(clientIp)) {
+    if (clientIp !== '' && !clientWhite && isBlocked(clientIp)) {
       sendBlocked(res)
       return
     }
@@ -1555,8 +1618,9 @@ function applyProxy(ctx, config) {
 
   const onUpgrade = (req, clientSocket, head) => {
     const upgradeIp = noteClient(req)
-    if (upgradeIp !== '') scanHead(req, upgradeIp)
-    if (upgradeIp !== '' && isBlocked(upgradeIp)) {
+    const upgradeWhite = upgradeIp !== '' && isWhitelisted(upgradeIp)
+    if (upgradeIp !== '' && !upgradeWhite) scanHead(req, upgradeIp)
+    if (upgradeIp !== '' && !upgradeWhite && isBlocked(upgradeIp)) {
       try { clientSocket.end('HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\nconnection: close\r\n\r\n') } catch { /* 已关 */ }
       return
     }
@@ -1608,7 +1672,7 @@ function applyProxy(ctx, config) {
 
   const forwardGate = (req) => {
     const ip = noteClient(req)
-    if (ip !== '' && isBlocked(ip)) return 'blocked'
+    if (ip !== '' && !isWhitelisted(ip) && isBlocked(ip)) return 'blocked'
     // 额外端口不认 /<key> 路径（那会跟插件自己的路由打架）：
     // 先在 8080 用密钥进一次，cookie 是按主机共享的，这里就认了
     return accessGate(req) === 'ok' ? 'ok' : 'need-cookie'

@@ -114,6 +114,7 @@ const DEFAULT_STATE = {
   port: DEFAULT_PORT,
   blacklistEnabled: false,
   blockedIps: [],
+  whitelist: [],
   scanGuard: false,
   scanBlocked: [],
   publicAccess: false,
@@ -123,6 +124,20 @@ const DEFAULT_STATE = {
   ipv6: false,
   updatedAt: null,
   updatedBy: null,
+}
+
+const MAX_WHITELIST = 50
+
+const sanitizeWhitelist = (value) => {
+  if (!Array.isArray(value)) return []
+  const out = []
+  for (const item of value) {
+    const ip = normalizeIp(item)
+    if (ip === '' || isLoopback(ip) || out.includes(ip)) continue
+    out.push(ip)
+    if (out.length >= MAX_WHITELIST) break
+  }
+  return out
 }
 
 const sanitizeBlocked = (value) => {
@@ -161,7 +176,8 @@ const readState = () => {
       lanAccess: raw?.lanAccess === true,
       port: parsed.ok ? parsed.port : DEFAULT_PORT,
       blacklistEnabled: raw?.blacklistEnabled === true,
-      blockedIps: sanitizeBlocked(raw?.blockedIps),
+      blockedIps: sanitizeBlocked(raw?.blockedIps).filter((ip) => !sanitizeWhitelist(raw?.whitelist).includes(ip)),
+      whitelist: sanitizeWhitelist(raw?.whitelist),
       scanGuard: raw?.scanGuard === true,
       scanBlocked: sanitizeBlocked(raw?.scanBlocked),
       publicAccess: raw?.publicAccess === true && key.ok,
@@ -208,7 +224,8 @@ const commit = (patch, by) => {
     updatedAt: new Date().toISOString(),
     updatedBy: by,
   }
-  next.blockedIps = sanitizeBlocked(next.blockedIps)
+  next.whitelist = sanitizeWhitelist(next.whitelist)
+  next.blockedIps = sanitizeBlocked(next.blockedIps).filter((ip) => !next.whitelist.includes(ip))
   next.scanBlocked = sanitizeBlocked(next.scanBlocked).filter((ip) => next.blockedIps.includes(ip))
   next.forwards = sanitizeForwards(next.forwards)
   writeState(next)
@@ -220,6 +237,7 @@ const commit = (patch, by) => {
 export const getLanState = () => ({
   ...state,
   blockedIps: [...state.blockedIps],
+  whitelist: [...(state.whitelist || [])],
   scanBlocked: [...(state.scanBlocked || [])],
   forwards: [...(state.forwards || [])],
 })
@@ -306,6 +324,9 @@ export const blockIp = (value, by = 'unknown', reason = 'manual') => {
   const ip = normalizeIp(value)
   if (ip === '') throw new Error('IP 地址不合法：' + String(value))
   if (isLoopback(ip)) throw new Error('不能封禁本机回环地址（会把设置页自己也锁在外面）')
+  if ((state.whitelist || []).includes(ip)) {
+    return { ok: true, added: false, ip, whitelisted: true, state: getLanState() }
+  }
   const scan = reason === 'scan'
   if (state.blockedIps.includes(ip)) {
     if (scan && !state.scanBlocked.includes(ip)) {
@@ -329,6 +350,46 @@ export const unblockIp = (value, by = 'unknown') => {
   const rest = state.blockedIps.filter((item) => item !== ip)
   const next = commit({ blockedIps: rest, scanBlocked: state.scanBlocked.filter((item) => item !== ip) }, by)
   return { ok: true, removed: true, ip, state: next }
+}
+
+/**
+ * 批量拉黑（同一台设备的多个 IP 一起）。
+ * 已白名单的跳过；返回 `{ ok, added: [...], skipped: [...] }`。
+ */
+export const blockIps = (values, by = 'unknown', reason = 'manual') => {
+  const added = []
+  const skipped = []
+  for (const value of Array.isArray(values) ? values : [values]) {
+    const ip = normalizeIp(value)
+    if (ip === '') { skipped.push(String(value)); continue }
+    if ((state.whitelist || []).includes(ip) || isLoopback(ip)) { skipped.push(ip); continue }
+    const res = blockIp(ip, by, reason)
+    if (res.added) added.push(ip)
+  }
+  return { ok: true, added, skipped, state: getLanState() }
+}
+
+/** 加入永久白名单（不进黑名单、不被防扫描拉黑）。 */
+export const addWhitelist = (value, by = 'unknown') => {
+  const ip = normalizeIp(value)
+  if (ip === '') throw new Error('IP 地址不合法：' + String(value))
+  if (isLoopback(ip)) throw new Error('本机回环地址本来就永远放行，不用加白名单')
+  if ((state.whitelist || []).includes(ip)) return { ok: true, added: false, ip, state: getLanState() }
+  if ((state.whitelist || []).length >= MAX_WHITELIST) throw new Error('白名单最多 ' + MAX_WHITELIST + ' 个地址')
+  const blockedIps = state.blockedIps.filter((item) => item !== ip)
+  const next = commit({
+    whitelist: [...(state.whitelist || []), ip],
+    blockedIps,
+    scanBlocked: state.scanBlocked.filter((item) => item !== ip),
+  }, by)
+  return { ok: true, added: true, ip, state: next }
+}
+
+/** 这个 IP 是否在永久白名单里（白名单不受任何开关影响）。 */
+export const isWhitelisted = (value) => {
+  const ip = normalizeIp(value)
+  if (ip === '') return false
+  return (state.whitelist || []).includes(ip)
 }
 
 /** 当前是否拦这个 IP：黑名单没开就一律放行。 */
@@ -378,6 +439,7 @@ export const resetConfig = (by = 'unknown') => commit({
   port: DEFAULT_PORT,
   blacklistEnabled: false,
   blockedIps: [],
+  whitelist: [],
   scanGuard: false,
   scanBlocked: [],
   publicAccess: false,
@@ -406,6 +468,7 @@ const startWatch = () => {
         && next.port === state.port
         && next.blacklistEnabled === state.blacklistEnabled
         && next.blockedIps.join(',') === state.blockedIps.join(',')
+        && next.whitelist.join(',') === state.whitelist.join(',')
         && next.scanGuard === state.scanGuard
         && next.scanBlocked.join(',') === state.scanBlocked.join(',')
         && next.publicAccess === state.publicAccess
@@ -435,6 +498,8 @@ export const describeLanState = (port) => {
     blacklistEnabled: current.blacklistEnabled,
     blockedIps: current.blockedIps,
     blockedCount: current.blockedIps.length,
+    whitelist: [...(current.whitelist || [])],
+    whitelistCount: (current.whitelist || []).length,
     scanGuard: current.scanGuard === true,
     scanBlocked: [...(current.scanBlocked || [])],
     publicAccess: current.publicAccess,

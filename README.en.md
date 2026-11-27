@@ -128,6 +128,7 @@ or **Settings → 局域网访问 (LAN access)** → flip the switch → confirm
 | Extra port forwarding | `/lan forward add 18787` | `reproxy-lan forward add 18787` |
 | Scan guard | `/lan scan on` / `/lan scan off` | `reproxy-lan scan on` / `reproxy-lan scan off` |
 | **Scan hits** (last 20) | — | `reproxy-lan scan log` |
+| Add to permanent whitelist | `/lan white <IP>` | `reproxy-lan white <ip>` |
 | Clear access log | `/lan clear` | `reproxy-lan clear` |
 | Show / remove forwarded ports | `/lan forward` / `/lan forward del 18787` | `reproxy-lan forward` / `forward del 18787` |
 | Enable / disable forwarding | `/lan forward on` / `off` | `reproxy-lan forward on` / `off` |
@@ -249,6 +250,17 @@ The master switch card also carries a **Contact the author** button (QQ group 10
 - **Clear** (right of the blacklist switch) wipes only the "recently seen" table: IPs already on the blacklist stay blocked and survive restarts.
 - **Scan guard** (next switch, off by default) auto-blocks sources that look like scanners/attackers and tags them with a red **攻击行为** badge left of the *Remove* button. Turning it on also enables the blacklist switch. Rules are in section 9.
 - On a phone with **two networks** (Wi-Fi + mobile data), a light-blue line appears under the red IP line: `双网络已开启 · IP 10.0.0.165、10.0.0.241` — every IP this device used in the last 5 minutes.
+
+#### Whitelist (permanent, no switch)
+
+Every row also has a green **白名单** button:
+
+- The IP goes on a **permanent whitelist** — whether the blacklist switch and the scan guard are on or off, a whitelisted host is **never** blocked;
+- There is **no remove button** on purpose: it is the safety seat for devices that must never lose access. Clearing it requires `reproxy-lan reset`;
+- Adding to the whitelist removes the IP from the blacklist automatically;
+- The settings page ends with two cards, **黑名单** and **白名单**, both fed by the same access records;
+- **一键清除** empties both cards (the stored lists stay; entries show up again on their next visit);
+- Scan hits now block **every IP of that device** (phone with Wi-Fi + mobile data), so switching networks does not get around it.
 - **One row per device**: matched by MAC > IP > system+model > model (the browser is not part of the match). A new network (new IP) or a new browser only updates the existing row instead of adding another one.
 
 **Reset (safety valve for misconfiguration):**
