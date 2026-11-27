@@ -115,6 +115,7 @@ const DEFAULT_STATE = {
   blacklistEnabled: false,
   blockedIps: [],
   whitelist: [],
+  whitelistEnabled: false,
   scanGuard: false,
   scanBlocked: [],
   publicAccess: false,
@@ -178,6 +179,7 @@ const readState = () => {
       blacklistEnabled: raw?.blacklistEnabled === true,
       blockedIps: sanitizeBlocked(raw?.blockedIps).filter((ip) => !sanitizeWhitelist(raw?.whitelist).includes(ip)),
       whitelist: sanitizeWhitelist(raw?.whitelist),
+      whitelistEnabled: raw?.whitelistEnabled === true,
       scanGuard: raw?.scanGuard === true,
       scanBlocked: sanitizeBlocked(raw?.scanBlocked),
       publicAccess: raw?.publicAccess === true && key.ok,
@@ -225,6 +227,9 @@ const commit = (patch, by) => {
     updatedBy: by,
   }
   next.whitelist = sanitizeWhitelist(next.whitelist)
+  next.whitelistEnabled = next.whitelistEnabled === true
+  if (next.whitelistEnabled === true) next.blacklistEnabled = false
+  if (next.blacklistEnabled === true) next.whitelistEnabled = false
   next.blockedIps = sanitizeBlocked(next.blockedIps).filter((ip) => !next.whitelist.includes(ip))
   next.scanBlocked = sanitizeBlocked(next.scanBlocked).filter((ip) => next.blockedIps.includes(ip))
   next.forwards = sanitizeForwards(next.forwards)
@@ -238,6 +243,7 @@ export const getLanState = () => ({
   ...state,
   blockedIps: [...state.blockedIps],
   whitelist: [...(state.whitelist || [])],
+  whitelistEnabled: state.whitelistEnabled === true,
   scanBlocked: [...(state.scanBlocked || [])],
   forwards: [...(state.forwards || [])],
 })
@@ -294,7 +300,17 @@ export const setPublicAccess = (enabled, value, by = 'unknown') => {
 }
 
 /** 黑名单总开关。关掉时不拦任何人，但名单保留，下次打开继续生效。 */
-export const setBlacklistEnabled = (enabled, by = 'unknown') => commit({ blacklistEnabled: enabled === true }, by)
+/** 黑名单开关：打开就把白名单关掉（两种模式互斥，只能开一个）。 */
+export const setBlacklistEnabled = (enabled, by = 'unknown') => commit(
+  enabled === true ? { blacklistEnabled: true, whitelistEnabled: false } : { blacklistEnabled: false },
+  by,
+)
+
+/** 白名单开关：打开＝只放行名单里的设备（回环永远放行），同时把黑名单关掉。 */
+export const setWhitelistEnabled = (enabled, by = 'unknown') => commit(
+  enabled === true ? { whitelistEnabled: true, blacklistEnabled: false } : { whitelistEnabled: false },
+  by,
+)
 
 /**
  * 防扫描攻击开关。开启时顺手把黑名单总开关也打开（不然拉了黑也不生效）。
@@ -385,12 +401,26 @@ export const addWhitelist = (value, by = 'unknown') => {
   return { ok: true, added: true, ip, state: next }
 }
 
+/** 从白名单里移除（本机回环不允许移除）。 */
+export const removeWhitelist = (value, by = 'unknown') => {
+  const ip = normalizeIp(value)
+  if (ip === '' || isLoopback(ip)) return { ok: false, removed: false, ip, error: '本机地址不能移出白名单' }
+  if (!(state.whitelist || []).includes(ip)) return { ok: true, removed: false, ip, state: getLanState() }
+  const next = commit({ whitelist: (state.whitelist || []).filter((item) => item !== ip) }, by)
+  return { ok: true, removed: true, ip, state: next }
+}
+
 /** 这个 IP 是否在永久白名单里（白名单不受任何开关影响）。 */
 export const isWhitelisted = (value) => {
   const ip = normalizeIp(value)
   if (ip === '') return false
+  if (isLoopback(ip)) return true
+  if (state.whitelistEnabled === false) return false
   return (state.whitelist || []).includes(ip)
 }
+
+/** 白名单模式：只放行名单里的设备，其它一律拦。与黑名单模式互斥。 */
+export const isWhitelistMode = () => state.whitelistEnabled === true
 
 /** 当前是否拦这个 IP：黑名单没开就一律放行。 */
 export const isBlocked = (value) => {
@@ -440,6 +470,7 @@ export const resetConfig = (by = 'unknown') => commit({
   blacklistEnabled: false,
   blockedIps: [],
   whitelist: [],
+  whitelistEnabled: false,
   scanGuard: false,
   scanBlocked: [],
   publicAccess: false,
@@ -469,6 +500,7 @@ const startWatch = () => {
         && next.blacklistEnabled === state.blacklistEnabled
         && next.blockedIps.join(',') === state.blockedIps.join(',')
         && next.whitelist.join(',') === state.whitelist.join(',')
+        && next.whitelistEnabled === state.whitelistEnabled
         && next.scanGuard === state.scanGuard
         && next.scanBlocked.join(',') === state.scanBlocked.join(',')
         && next.publicAccess === state.publicAccess
@@ -500,6 +532,7 @@ export const describeLanState = (port) => {
     blockedCount: current.blockedIps.length,
     whitelist: [...(current.whitelist || [])],
     whitelistCount: (current.whitelist || []).length,
+    whitelistEnabled: current.whitelistEnabled === true,
     scanGuard: current.scanGuard === true,
     scanBlocked: [...(current.scanBlocked || [])],
     publicAccess: current.publicAccess,
