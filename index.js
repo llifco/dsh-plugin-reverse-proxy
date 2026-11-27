@@ -22,6 +22,9 @@ import https from 'node:https'
 import net from 'node:net'
 import os from 'node:os'
 import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import zlib from 'node:zlib'
 import { apply as applyTrustedConnection } from './vendor/skip/host.js'
 import {
@@ -38,6 +41,9 @@ import {
   isBlocked,
   isScanBlocked,
   isWhitelisted,
+  isWhitelistMode,
+  setWhitelistEnabled,
+  removeWhitelist,
   addWhitelist,
   blockIps,
   normalizeIp,
@@ -509,6 +515,64 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
 
 
   /** 永久白名单：加进去就不再拦、也不会被防扫描拉黑（不受任何开关影响）。 */
+  const routeUnwhite = {
+    kind: 'exact',
+    path: '/reproxy-lan/unwhite',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { ok: false, error: '只支持 POST' })
+        return
+      }
+      let body
+      try {
+        body = await readBody(req)
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+        return
+      }
+      try {
+        const result = removeWhitelist(body.ip, 'settings')
+        if (result.ok !== true) {
+          sendJson(res, 400, { ok: false, error: result.error || '移除失败' })
+          return
+        }
+        log('info', '移出白名单：' + result.ip + (result.removed ? '' : '（本来就不在）'))
+        sendJson(res, 200, withClients({ ...describeLanState(), removed: result.removed, ip: result.ip }))
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+      }
+    },
+  }
+
+  const routeWhitelistEnabled = {
+    kind: 'exact',
+    path: '/reproxy-lan/whitelist/enabled',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        sendJson(res, 405, { ok: false, error: '只支持 POST' })
+        return
+      }
+      let body
+      try {
+        body = await readBody(req)
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+        return
+      }
+      if (typeof body.enabled !== 'boolean') {
+        sendJson(res, 400, { ok: false, error: 'enabled 必须是 true 或 false' })
+        return
+      }
+      try {
+        setWhitelistEnabled(body.enabled, 'settings')
+        log('info', '白名单开关：' + (body.enabled ? '打开（黑名单自动关）' : '关闭（名单保留）'))
+        sendJson(res, 200, withClients({ ...describeLanState(), whitelistEnabled: body.enabled === true }))
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: e.message })
+      }
+    },
+  }
+
   const routeWhitelist = {
     kind: 'exact',
     path: '/reproxy-lan/whitelist',
@@ -595,6 +659,32 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
       }
       const hits = typeof extra.scanHits === 'function' ? extra.scanHits() : []
       sendJson(res, 200, { ok: true, hits: Array.isArray(hits) ? hits : [] })
+    },
+  }
+
+  /** 赞助作者：直接把 assets/sponsor.jpg 吐出去（点按钮弹窗里显示这张图）。 */
+  const SPONSOR_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'assets', 'sponsor.jpg')
+  const routeSponsor = {
+    kind: 'exact',
+    path: '/reproxy-lan/sponsor',
+    handler: async (req, res) => {
+      if (req.method !== 'GET') {
+        res.writeHead(405, { 'Content-Type': 'text/plain; charset=utf-8' })
+        res.end('只支持 GET')
+        return
+      }
+      try {
+        const buf = readFileSync(SPONSOR_FILE)
+        res.writeHead(200, {
+          'Content-Type': 'image/jpeg',
+          'Content-Length': String(buf.length),
+          'Cache-Control': 'public, max-age=86400',
+        })
+        res.end(buf)
+      } catch (e) {
+        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
+        res.end('赞助图没找到')
+      }
     },
   }
 
@@ -841,9 +931,12 @@ function registerLanControl(ctx, cfg, log, extra = {}) {
     ctx.effect(() => webServer.register(routePublic))
     ctx.effect(() => webServer.register(routeIpv6))
     ctx.effect(() => webServer.register(routeWhitelist))
+    ctx.effect(() => webServer.register(routeWhitelistEnabled))
+    ctx.effect(() => webServer.register(routeUnwhite))
     ctx.effect(() => webServer.register(routeScan))
     ctx.effect(() => webServer.register(routeClear))
     ctx.effect(() => webServer.register(routeScanLog))
+    ctx.effect(() => webServer.register(routeSponsor))
     ctx.effect(() => webServer.register(routeKey))
     ctx.effect(() => webServer.register(routeForwards))
     ctx.effect(() => webServer.register(routeForwardsEnabled))
@@ -1412,6 +1505,16 @@ function applyProxy(ctx, config) {
     + '这台设备不在同一个局域网里。管理员如果想允许公网访问，需要在「设置 → 局域网访问 → 公网访问」里打开开关并设置访问密钥。'
     + '</p></body></html>'
 
+  const WHITELIST_HTML = '<!doctype html><html lang="zh-CN"><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    + '<title>403 · 不在白名单里</title>'
+    + '<body style="margin:0;font:15px/1.8 -apple-system,system-ui,sans-serif;background:#12141a;color:#e6e8ee;padding:56px 24px">'
+    + '<h2 style="margin:0 0 12px;font-size:20px">403 · 这台设备不在白名单里</h2>'
+    + '<p style="margin:0;color:#9aa0ad;max-width:560px">'
+    + '管理员打开了白名单模式：只有白名单里的设备能进后台，其它设备一律拦。'
+    + '如果这是你的设备，请联系管理员在「设置 → 局域网访问 → 白名单」里加上它的 IP。'
+    + '</p></body></html>'
+
   const NOT_FOUND_HTML = '<!doctype html><html lang="zh-CN"><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1">'
     + '<title>404</title>'
@@ -1548,6 +1651,11 @@ function applyProxy(ctx, config) {
       sendBlocked(res)
       return
     }
+    // 白名单模式：只放行名单里的设备；/reproxy-lan/ 自己的接口留着，不然连设置页都进不去
+    if (clientIp !== '' && isWhitelistMode() && !isWhitelisted(clientIp) && !(req.url || '').startsWith('/reproxy-lan/')) {
+      sendHtml(res, 403, WHITELIST_HTML)
+      return
+    }
     const verdict = accessGate(req)
     if (verdict === 'lan-only') { sendHtml(res, 403, LAN_ONLY_HTML); return }
     if (verdict === 'need-key' || verdict === 'key-broken') { sendHtml(res, 404, NOT_FOUND_HTML); return }
@@ -1620,6 +1728,10 @@ function applyProxy(ctx, config) {
     const upgradeIp = noteClient(req)
     const upgradeWhite = upgradeIp !== '' && isWhitelisted(upgradeIp)
     if (upgradeIp !== '' && !upgradeWhite) scanHead(req, upgradeIp)
+    if (upgradeIp !== '' && isWhitelistMode() && !isWhitelisted(upgradeIp)) {
+      try { clientSocket.end('HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\nconnection: close\r\n\r\n') } catch { /* 已关 */ }
+      return
+    }
     if (upgradeIp !== '' && !upgradeWhite && isBlocked(upgradeIp)) {
       try { clientSocket.end('HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\nconnection: close\r\n\r\n') } catch { /* 已关 */ }
       return
@@ -1672,6 +1784,7 @@ function applyProxy(ctx, config) {
 
   const forwardGate = (req) => {
     const ip = noteClient(req)
+    if (ip !== '' && isWhitelistMode() && !isWhitelisted(ip)) return 'blocked'
     if (ip !== '' && !isWhitelisted(ip) && isBlocked(ip)) return 'blocked'
     // 额外端口不认 /<key> 路径（那会跟插件自己的路由打架）：
     // 先在 8080 用密钥进一次，cookie 是按主机共享的，这里就认了
