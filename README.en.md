@@ -54,7 +54,7 @@ No GUI around? The same switch works from a terminal (`yes` is required) — see
 
 
 
-**Access IPs and blacklist** (0.5.0+) — hit "Add" to blacklist a device; it then only sees a 403 page:
+**Blacklist / whitelist cards** (0.5.0+) — each card carries its own device list, add buttons, list, switch and one-click clear; the two switches are mutually exclusive. Hit "Add" to blacklist a device; it then only sees a 403 page:
 
 <p align="center">
   <img src="assets/access-ip.jpg" width="620" alt="Settings · access IPs and blacklist">
@@ -235,7 +235,7 @@ The master switch card also carries a **Contact the author** button (QQ group 10
 /lan forward on         enable forwarding (LAN switch must be on)
 ```
 
-### 7. Access IPs and blacklist (off by default)
+### 7. Blacklist and whitelist (off by default)
 
 - Lists every device that recently hit the port; each row is three lines:
   - tiny grey `MAC 00:0e:c6:8e:bd:84` (only for IPv4 devices on the same L2 segment; otherwise
@@ -251,17 +251,23 @@ The master switch card also carries a **Contact the author** button (QQ group 10
 - **Scan guard** (next switch, off by default) auto-blocks sources that look like scanners/attackers and tags them with a red **攻击行为** badge left of the *Remove* button. Turning it on also enables the blacklist switch. Rules are in section 9.
 - On a phone with **two networks** (Wi-Fi + mobile data), a light-blue line appears under the red IP line: `双网络已开启 · IP 10.0.0.165、10.0.0.241` — every IP this device used in the last 5 minutes.
 
-#### Whitelist (permanent, no switch)
+#### Whitelist (whitelist mode: only listed devices may enter)
 
-Every row also has a green **白名单** button:
+The settings page ends with two cards, **黑名单** and **白名单**, both fed by the same access records and listed per device:
 
-- The IP goes on a **permanent whitelist** — whether the blacklist switch and the scan guard are on or off, a whitelisted host is **never** blocked;
-- There is **no remove button** on purpose: it is the safety seat for devices that must never lose access. Clearing it requires `reproxy-lan reset`;
-- Adding to the whitelist removes the IP from the blacklist automatically;
-- The settings page ends with two cards, **黑名单** and **白名单**, both fed by the same access records;
-- **一键清除** empties both cards (the stored lists stay; entries show up again on their next visit);
-- Scan hits now block **every IP of that device** (phone with Wi-Fi + mobile data), so switching networks does not get around it.
-- **One row per device**: matched by MAC > IP > system+model > model (the browser is not part of the match). A new network (new IP) or a new browser only updates the existing row instead of adding another one.
+- **The two switches are mutually exclusive**: turning the whitelist on turns the blacklist off and vice versa — whichever switch you flipped is the one that stays on;
+- **Whitelist mode**: only devices on the list may open the UI, **everything else gets 403** (the page says "403 · this device is not on the whitelist"). Handy when only your own devices should get in;
+- The local address `127.0.0.1` is **always on the whitelist and cannot be removed** — so you can still log in from the server itself if the config gets broken;
+- Every other whitelisted IP has a **移除** button; in whitelist mode the scan guard no longer blocks the listed devices;
+- Adding an IP to the whitelist removes it from the blacklist automatically;
+- **一键清除 only clears the "recent visits" table** (both cards together); the stored black/white lists stay, and entries reappear on the next visit;
+- Scan hits block **every IP of that device** (phone with Wi-Fi + mobile data), so switching networks does not get around it.
+
+#### Sponsor (optional)
+
+Next to the author link in the "LAN access" card there is a **赞助作者** button; it opens the author's tip QR code and any click closes it.
+
+Sponsoring is optional and the plugin stays free. The author spent a lot of time getting it to this point — support it if you can.
 
 **Reset (safety valve for misconfiguration):**
 
